@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.py[cod]
+.MKR_TEST_pending.xlsx
+Backup/
+Logs/
+Reports/
+MKR_Attachments/
+MKR_FlowSync_V12.0_Python/

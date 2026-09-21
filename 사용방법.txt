@@ -1,0 +1,155 @@
+MKR FlowSync V12.0 Python Edition
+================================
+
+1. 준비 사항
+-----------
+- Windows 10/11
+- Python 3.12 64비트
+- Microsoft Excel 데스크톱 앱
+- Classic Outlook 데스크톱 앱
+- Microsoft Word 데스크톱 앱
+- 인터넷 연결(최초 pywin32 설치 시 필요)
+- Classic Outlook에 hnagasawa@milbon.com 메일을 받는 회사 메일함이 연결되어 있어야 합니다.
+
+새 Outlook과 Microsoft Graph는 지원하지 않습니다.
+
+2. 최초 설치
+-----------
+1) ZIP의 모든 파일을 같은 폴더에 압축 해제합니다.
+2) SETUP_MKR.cmd를 더블클릭합니다.
+3) Python 환경과 pywin32 설치가 완료될 때까지 기다립니다.
+
+Python을 설치할 때는 Python 3.12 64비트를 사용하고
+"Add Python to PATH" 항목을 선택하십시오.
+
+3. 먼저 미리보기 실행
+-------------------
+1) Classic Outlook을 엽니다.
+2) MKR_TEST.xlsx는 닫아 둡니다.
+3) DRY_RUN_MKR.cmd를 더블클릭합니다.
+4) Reports 폴더에 생성된 MKR_DRY_RUN_날짜시간.csv를 확인합니다.
+
+미리보기는 Outlook과 첨부파일을 읽지만 MKR_TEST.xlsx를 교체하지 않습니다.
+보고서의 Rule, Raw Order QTY, Sales Note Order QTY, K Total, L Total,
+Final Order QTY와 Final Shipped QTY를 확인할 수 있습니다.
+
+4. 실제 동기화
+------------
+1) Classic Outlook을 열어 둡니다.
+2) MKR_TEST.xlsx를 닫습니다.
+3) START_MKR_SYNC.cmd를 더블클릭합니다.
+
+실행 순서:
+- Python 구문검사
+- 필수 수량 판정 및 파서 자체시험
+- Outlook 메일 최대 500건 검색
+- 주문 Excel과 SALES NOTE PDF 분석
+- Backup 폴더에 실행 전 원본 보존
+- 임시 Excel에 결과 저장
+- 5개 시트와 수량 재검증
+- 성공 시에만 MKR_TEST.xlsx 교체
+- 성공한 Excel 자동 실행
+
+오류가 발생하면 기존 MKR_TEST.xlsx는 교체하지 않습니다.
+
+5. 처리 대상
+-----------
+- 발신자: hnagasawa@milbon.com
+- 검색 시작일: 2026-08-01
+- 검색 상한: 기본 받은편지함의 최신 메일 500건
+- MKR48/26   -> MKR48_26
+- MKR48/26-1 -> MKR48_26-1
+- MKR49/26   -> MKR49_26
+- MKR49/26-1 -> MKR49_26-1
+- MKR56/26   -> MKR56_26
+
+메일 제목의 MKR만 현재 출하 MKR로 사용합니다.
+메일 본문의 과거 MKR 번호는 Back Order NO.로만 사용합니다.
+
+6. Excel 기록
+------------
+A:E 신규 주문
+- Code
+- Name
+- Order QTY
+- Shipped QTY
+- Shortage QTY
+
+H:M 과거 MKR 백오더
+- Back Order NO.
+- Code
+- Name
+- Order QTY
+- Shipped QTY
+- Shortage QTY
+
+각 영역은 10~509행, 최대 500개 품목을 지원합니다.
+Shortage QTY는 Python이 MAX(0, Order QTY - Shipped QTY)로 계산한 숫자입니다.
+
+7. V12.0 판정 규칙
+----------------
+품번마다 다음 순서로 판정합니다.
+
+R = 최초 원본 주문수량
+S = 최초 일반 SALES NOTE 선적수량
+P = 최초 일반 SALES NOTE 주문수량
+K = 백오더 Order QTY 합계
+L = 이번 MKR에 포함된 백오더 Shipped QTY 합계
+
+1) R=L, S=L, K>R이면 백오더 전용 출고: 신규 주문 0
+2) R=P이면 원주문이 이미 신규 주문만 포함: R 유지
+3) R=P+K이면 원주문에서 K를 제외: P 사용
+4) P=R+L이면 SALES NOTE에 L이 포함: R 유지
+5) R=P+L이면 원주문에 L이 포함: P 사용
+6) P가 누락되고 R>=K이면: R-K 사용
+
+6번에서 S가 신규 주문보다 크면 S-L을 시도합니다.
+조정값이 0 이상이고 신규 주문 이하일 때만 사용합니다.
+
+관계가 맞지 않거나 결과가 음수이면 작업 전체를 중단합니다.
+
+8. 원본 스냅샷과 백오더
+---------------------
+- 최초 원본 주문 메일의 A/B 주문 첨부를 합산합니다.
+- 동일한 파일 내용은 한 번만 계산합니다.
+- 후속 원본 복사본과 Rev 주문서는 무시합니다.
+- 최초 일반 SALES NOTE만 A:E에 사용합니다.
+- PDF 값이 우선이며 같은 메일 본문은 누락 정보만 보완합니다.
+- Rev 및 후속 SALES NOTE는 A:E를 바꾸지 않습니다.
+- 백오더 표에서 같은 과거 MKR+품번이 여러 행이면 K와 L을 각각 합산합니다.
+- 여러 메일에 같은 키가 있으면 가장 최신 스냅샷 하나만 사용합니다.
+- 현재 출하 MKR과 같은 Back Order NO. 행은 제외합니다.
+
+9. 안전 중단 조건
+----------------
+- 메일 제목에 대상 MKR이 두 개 이상 표시됨
+- 첨부파일명 또는 주문서 내부 MKR이 메일 제목과 다름
+- 수량 판정 규칙 어느 것에도 맞지 않음
+- 계산 결과가 음수
+- K가 R보다 크지만 백오더 전용 출고가 아님
+- 조정 후에도 Shipped QTY가 신규 Order QTY보다 큼
+- A:E 또는 H:M이 500행을 초과함
+- MKR_TEST.xlsx가 Excel에서 열려 있거나 다른 프로그램이 잠금
+- 임시 Excel의 시트, 헤더, 수량 또는 파일 구조 검증 실패
+- 실행 중 원본 Excel의 SHA256이 변경됨
+
+10. 로그와 복구
+--------------
+- Logs: 실행 과정과 오류
+- Reports: 미리보기 또는 실제 실행 감사 CSV
+- MKR_Attachments: 실행 시 저장한 첨부파일
+- Backup: 실행 전 MKR_TEST.xlsx
+
+수량 오류 로그에는 MKR, 품번, R, S, P, K, L, 시도 규칙이 표시됩니다.
+문제가 생기면 Logs 폴더에서 가장 최근 파일을 확인하십시오.
+필요하면 Backup의 파일을 MKR_TEST.xlsx로 복사해 복구할 수 있습니다.
+
+11. 설정 변경
+------------
+config.json에서 발신자, 검색 시작일, 최대 검색량과 파일명을 확인할 수 있습니다.
+대상 MKR 5개와 행 범위는 안전 검증을 위해 V12.0에서 고정되어 있습니다.
+
+12. 파일 무결성 확인
+-----------------
+SHA256SUMS.txt에는 배포 파일별 SHA256 값이 기록됩니다.
+파일이 수정되거나 누락되면 체크섬이 달라집니다.

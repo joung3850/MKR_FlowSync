@@ -1,0 +1,15 @@
+{
+  "workbook": "MKR_TEST.xlsx",
+  "sender": "hnagasawa@milbon.com",
+  "start_date": "2026-08-01",
+  "max_messages": 500,
+  "data_start_row": 10,
+  "max_rows": 500,
+  "targets": {
+    "MKR48/26": "MKR48_26",
+    "MKR48/26-1": "MKR48_26-1",
+    "MKR49/26": "MKR49_26",
+    "MKR49/26-1": "MKR49_26-1",
+    "MKR56/26": "MKR56_26"
+  }
+}
