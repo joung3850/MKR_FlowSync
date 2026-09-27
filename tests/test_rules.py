@@ -64,7 +64,7 @@ class QuantityRuleTests(unittest.TestCase):
             backorder_order_qty=D("240"),
             backorder_shipped_qty=D("240"),
         )
-        self.assertEqual(result.rule_id, "R6_MISSING_SALES_ORDER")
+        self.assertEqual(result.rule_id, "R7_MISSING_SALES_ORDER")
         self.assertTrue(result.shipped_adjusted)
         self.assertEqual((result.order_qty, result.shipped_qty, result.shortage_qty), (D("1800"), D("1800"), D("0")))
 
@@ -78,6 +78,7 @@ class QuantityRuleTests(unittest.TestCase):
             raw_order_qty=D("180"),
             first_shipped_qty=D("100"),
             sales_note_order_qty=D("120"),
+            backorder_order_qty=D("100"),
             backorder_shipped_qty=D("60"),
         )
         self.assertEqual(result.rule_id, "R5_RAW_INCLUDES_L")
@@ -93,9 +94,10 @@ class QuantityRuleTests(unittest.TestCase):
         self.assertEqual(result.rule_id, "R3_RAW_INCLUDES_K")
         self.assertEqual(result.order_qty, D("0"))
 
-    def test_unmatched_relation_stops(self):
-        with self.assertRaises(QuantityRuleError):
-            self.decide(sales_note_order_qty=D("70"))
+    def test_sales_mismatch_without_backorder_keeps_original_order(self):
+        result = self.decide(sales_note_order_qty=D("70"))
+        self.assertEqual(result.rule_id, "R0_NO_BACKORDER")
+        self.assertEqual(result.order_qty, D("100"))
 
     def test_k_greater_than_raw_stops_when_not_rule1(self):
         with self.assertRaises(QuantityRuleError):
@@ -118,6 +120,32 @@ class QuantityRuleTests(unittest.TestCase):
                 backorder_order_qty=D("20"),
                 backorder_shipped_qty=D("10"),
             )
+
+    def test_missing_sales_uses_final_order_as_shipped(self):
+        result = self.decide(
+            code="330883",
+            raw_order_qty=D("960"),
+            first_shipped_qty=D("960"),
+            sales_note_order_qty=None,
+            backorder_order_qty=D("480"),
+            backorder_shipped_qty=D("180"),
+            shipped_fallback=True,
+        )
+        self.assertEqual(result.rule_id, "R7_MISSING_SALES_ORDER")
+        self.assertEqual((result.order_qty, result.shipped_qty), (D("480"), D("480")))
+
+    def test_missing_sales_with_k_above_order_uses_l_crosscheck(self):
+        result = self.decide(
+            code="754303",
+            raw_order_qty=D("1500"),
+            first_shipped_qty=D("1500"),
+            sales_note_order_qty=None,
+            backorder_order_qty=D("2400"),
+            backorder_shipped_qty=D("1200"),
+            shipped_fallback=True,
+        )
+        self.assertEqual(result.rule_id, "R8_MISSING_SALES_INCLUDES_L")
+        self.assertEqual((result.order_qty, result.shipped_qty), (D("300"), D("300")))
 
 
 if __name__ == "__main__":

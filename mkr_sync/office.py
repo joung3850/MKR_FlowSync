@@ -29,6 +29,9 @@ from .parsers import (
 def _load_com():
     try:
         import pythoncom  # type: ignore
+        # Outlook COM date values can be unpickled through this module at
+        # runtime, so keep the import explicit for frozen PyInstaller builds.
+        import win32timezone  # type: ignore  # noqa: F401
         import win32com.client  # type: ignore
     except ImportError as exc:
         raise OfficeAutomationError(
@@ -173,6 +176,22 @@ class WordPdfReader:
             pythoncom.CoUninitialize()
 
 
+class PdfTextReader:
+    """Extract embedded PDF text first and use Word only as a compatibility fallback."""
+
+    def read_text(self, path: Path) -> str:
+        try:
+            from pypdf import PdfReader  # type: ignore
+
+            reader = PdfReader(str(path))
+            text = "\n".join((page.extract_text() or "") for page in reader.pages)
+            if clean_text(text):
+                return clean_text(text)
+        except Exception:
+            pass
+        return WordPdfReader().read_text(path)
+
+
 class ExcelOrderReader:
     def __init__(self, logger):
         self.logger = logger
@@ -313,13 +332,30 @@ def _xlsx_merge_map(path: Path) -> dict[str, tuple[str, ...]]:
     return result
 
 
+def _validate_preserved_number_formats(
+    sheet_name: str,
+    source_formats: dict[str, str],
+    pending_formats: dict[str, str],
+) -> None:
+    for address, expected_format in source_formats.items():
+        actual_format = pending_formats.get(address, "")
+        if actual_format != expected_format:
+            raise WorkbookCommitError(
+                f"{sheet_name}의 셀 서식이 변경되었습니다: {address} "
+                f"(원본={expected_format or '없음'}, 임시={actual_format or '없음'})"
+            )
+
+
 class WorkbookTransaction:
     def __init__(self, config: AppConfig, logger):
         self.config = config
         self.logger = logger
         self.original_hash = ""
         self.backup_path: Path | None = None
-        self.pending_path = config.root / ".MKR_TEST_pending.xlsx"
+        self.source_number_formats: dict[str, dict[str, str]] = {}
+        self.pending_path = config.root / (
+            f".{config.workbook.stem}_data_pending{config.workbook.suffix}"
+        )
 
     def prepare(self) -> Path:
         try:
@@ -327,7 +363,10 @@ class WorkbookTransaction:
             self.original_hash = sha256_file(self.config.workbook)
             backup_dir = self.config.root / "Backup"
             backup_dir.mkdir(parents=True, exist_ok=True)
-            self.backup_path = backup_dir / f"MKR_TEST_before_{datetime.now():%Y%m%d_%H%M%S_%f}.xlsx"
+            self.backup_path = backup_dir / (
+                f"{self.config.workbook.stem}_before_data_apply_"
+                f"{datetime.now():%Y%m%d_%H%M%S_%f}{self.config.workbook.suffix}"
+            )
             shutil.copy2(self.config.workbook, self.backup_path)
             if self.pending_path.exists():
                 self.pending_path.unlink()
@@ -348,7 +387,9 @@ class WorkbookTransaction:
             excel.DisplayAlerts = False
             workbook = excel.Workbooks.Open(str(self.config.workbook), 0, False)
             for result in results:
-                self._write_sheet(workbook.Worksheets.Item(result.sheet), result)
+                sheet = workbook.Worksheets.Item(result.sheet)
+                self.source_number_formats[result.sheet] = self._data_number_formats(sheet)
+                self._write_sheet(sheet, result)
             workbook.SaveCopyAs(str(self.pending_path))
         except Exception as exc:
             raise WorkbookCommitError(f"임시 Excel 저장에 실패했습니다: {exc}") from exc
@@ -492,12 +533,12 @@ class WorkbookTransaction:
                 raise WorkbookCommitError(f"{result.sheet} 헤더가 다릅니다: {index + 1}열")
         if clean_text(sheet.Range("D3").Value2) != result.mkr:
             raise WorkbookCommitError(f"{result.sheet}의 MKR 번호가 다릅니다.")
+        source_formats = self.source_number_formats.get(result.sheet)
+        if source_formats is None:
+            raise WorkbookCommitError(f"{result.sheet}의 원본 셀 서식 기준값이 없습니다.")
+        pending_formats = self._data_number_formats(sheet)
+        _validate_preserved_number_formats(result.sheet, source_formats, pending_formats)
         first = self.config.data_start_row
-        if clean_text(sheet.Range(f"A{first}").NumberFormat) != "@" or clean_text(sheet.Range(f"H{first}").NumberFormat) != "@":
-            raise WorkbookCommitError(f"{result.sheet}의 품번 텍스트 서식이 변경되었습니다.")
-        for address in (f"C{first}", f"D{first}", f"E{first}", f"K{first}", f"L{first}", f"M{first}"):
-            if clean_text(sheet.Range(address).NumberFormat) != "#,##0":
-                raise WorkbookCommitError(f"{result.sheet}의 수량 숫자 서식이 변경되었습니다: {address}")
         for offset, decision in enumerate(result.decisions):
             row = first + offset
             values = tuple(sheet.Range(f"A{row}:E{row}").Value2[0])
@@ -516,6 +557,23 @@ class WorkbookTransaction:
             expected_qty = (backorder.order_qty, backorder.shipped_qty, backorder.shortage_qty)
             if actual != expected_qty:
                 raise WorkbookCommitError(f"{result.sheet} H:M 수량 검증 실패: {backorder.code}")
+
+    def _data_number_formats(self, sheet) -> dict[str, str]:
+        first = self.config.data_start_row
+        addresses = (
+            f"A{first}",
+            f"C{first}",
+            f"D{first}",
+            f"E{first}",
+            f"H{first}",
+            f"K{first}",
+            f"L{first}",
+            f"M{first}",
+        )
+        return {
+            address: clean_text(sheet.Range(address).NumberFormat)
+            for address in addresses
+        }
     def commit(self) -> None:
         try:
             if sha256_file(self.config.workbook) != self.original_hash:

@@ -109,12 +109,28 @@ def run_sync(dry_run: bool) -> int:
         print(f"로그: {log_path}")
 
 
+def run_gui() -> int:
+    from .web_app import run_web_app
+
+    return run_web_app()
+
+
+def run_tk_gui() -> int:
+    from .gui import run_gui as start_gui
+
+    return start_gui()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="MKR FlowSync V12.0 Python Edition")
-    parser.add_argument("command", choices=("self-test", "dry-run", "sync"))
+    parser.add_argument("command", choices=("self-test", "dry-run", "sync", "gui", "tk-gui"))
     args = parser.parse_args(argv)
     if args.command == "self-test":
         return run_self_tests()
+    if args.command == "gui":
+        return run_gui()
+    if args.command == "tk-gui":
+        return run_tk_gui()
     return run_sync(dry_run=args.command == "dry-run")
 
 

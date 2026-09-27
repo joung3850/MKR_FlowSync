@@ -73,9 +73,21 @@ def find_target_mkrs(value: object, targets: Iterable[str]) -> list[str]:
     return [item for item in find_all_mkrs(value) if item in allowed]
 
 
+def find_current_target_mkrs(subject: object, body: object, targets: Iterable[str]) -> list[str]:
+    """Resolve destinations without treating historical back-order MKRs as current."""
+    allowed = set(targets)
+    subject_mkrs = find_all_mkrs(subject)
+    if subject_mkrs:
+        return [item for item in subject_mkrs if item in allowed]
+    return find_target_mkrs(body, allowed)
+
+
 def validate_mkr_match(expected_mkr: str, discovered: Iterable[str], label: str) -> None:
     values = sorted(set(discovered))
-    if values and values != [expected_mkr]:
+    # An order workbook may also contain older MKR identifiers in its
+    # back-order table.  It is valid as long as the requested MKR itself is
+    # present; reject only files that mention other MKRs without the target.
+    if values and expected_mkr not in values:
         raise DataValidationError(
             f"메일 제목과 {label}의 MKR이 다릅니다: 제목={expected_mkr} / {label}={', '.join(values)}"
         )
@@ -107,6 +119,17 @@ def attachment_kind(filename: str, subject: str = "") -> tuple[str | None, bool]
     if re.search(r"(?i)sales[ _-]*note", name) and name.lower().endswith(".pdf"):
         return "sales_note", revision
     if not re.search(r"(?i)\.(xls|xlsx|xlsm)$", name):
+        return None, revision
+    # Files produced after the original order often contain the MKR number in
+    # their name as well.  They are evidence for shipping/back-order work, but
+    # must never become the Order QTY baseline.
+    if re.search(
+        r"(?i)lot\s*(?:no\.?|number)|pallet\s*detail|container\s*(?:weight|detail)|"
+        r"invoice|packing\s*list|trade\s*shipping|(?:^|[_\s-])tsi(?:[_\s-]|$)|"
+        r"出荷日変更|선적일\s*변경|출하일\s*변경|"
+        r"(?:shipment|shipping)\s*date\s*(?:change|update)",
+        name,
+    ):
         return None, revision
     if not re.search(r"(?i)(\(krw\)|order|mkr)", name):
         return None, revision
@@ -146,6 +169,15 @@ def _is_qty_header(value: object) -> bool:
 
 def _is_non_item(value: object) -> bool:
     return bool(re.search(r"(?i)^(code|name|description|qty|quantity|pce|pcs|ea)$|price|amount|total|currency|krw|thb|usd|数量|金額|単価|합계|금액", normalize_spaces(value)))
+
+
+def _is_suspicious_fallback_name(value: object) -> bool:
+    """Reject common logistics identifiers found in non-order spreadsheets."""
+    text = normalize_spaces(value)
+    return bool(
+        re.fullmatch(r"(?i)[A-Z]{4}\d{7}", text)
+        or re.fullmatch(r"(?i)\d+(?:\.\d+)?\s*(?:FT|FOOT|FEET)(?:['\"])?", text)
+    )
 
 
 def _add_order_item(items: dict[str, OrderItem], code: str, name: str, quantity: Decimal) -> None:
@@ -210,7 +242,12 @@ def parse_order_matrix(matrix: Sequence[Sequence[object]]) -> tuple[dict[str, Or
             if not text:
                 continue
             number = parse_decimal(raw)
-            if not name and number is None and not _is_non_item(text):
+            if (
+                not name
+                and number is None
+                and not _is_non_item(text)
+                and not _is_suspicious_fallback_name(text)
+            ):
                 name = text
                 continue
             if name and number is not None and ZERO <= number <= Decimal("100000000"):
@@ -255,6 +292,52 @@ def _parse_backorder_row(text: str, current_mkr: str, received_at: datetime, sou
     )
 
 
+def _parse_backorder_cells(
+    lines: Sequence[str],
+    index: int,
+    current_mkr: str,
+    received_at: datetime,
+    source: str,
+) -> tuple[BackorderSnapshot | None, int]:
+    """Parse Outlook/Word tables whose cells are separated by control characters."""
+    source_mkr = canonical_mkr(lines[index])
+    if source_mkr is None or not re.fullmatch(MKR_PATTERN, lines[index]):
+        return None, index
+    if index + 3 >= len(lines) or not re.fullmatch(r"\d{6}", lines[index + 1]):
+        return None, index
+
+    code = lines[index + 1]
+    name = normalize_spaces(lines[index + 2])
+    quantities: list[Decimal] = []
+    cursor = index + 3
+    while cursor < len(lines):
+        if re.match(r"(?i)^\s*MKR\s*\d{1,3}\s*[/_-]\s*\d{2}", lines[cursor]):
+            break
+        number = parse_decimal(lines[cursor])
+        if number is not None:
+            quantities.append(number)
+        cursor += 1
+
+    if not name or len(quantities) < 2:
+        return None, index
+    order_qty, shipped_qty = quantities[:2]
+    if order_qty < ZERO or shipped_qty < ZERO:
+        return None, index
+    return (
+        BackorderSnapshot(
+            current_mkr=current_mkr,
+            source_mkr=source_mkr,
+            code=code,
+            name=name,
+            order_qty=order_qty,
+            shipped_qty=shipped_qty,
+            received_at=received_at,
+            source=source,
+        ),
+        max(index, cursor - 1),
+    )
+
+
 def parse_backorders(text: str, current_mkr: str, received_at: datetime, source: str) -> dict[tuple[str, str], BackorderSnapshot]:
     marker = BACKORDER_MARKER.search(text or "")
     if not marker:
@@ -269,6 +352,10 @@ def parse_backorders(text: str, current_mkr: str, received_at: datetime, source:
         item = _parse_backorder_row(lines[index], current_mkr, received_at, source)
         consumed = index
         if item is None:
+            item, consumed = _parse_backorder_cells(
+                lines, index, current_mkr, received_at, source
+            )
+        if item is None:
             parts = [lines[index]]
             for cursor in range(index + 1, min(len(lines), index + 12)):
                 if re.match(r"(?i)^\s*MKR\s*\d{1,3}\s*[/_-]\s*\d{2}", lines[cursor]):
@@ -279,20 +366,10 @@ def parse_backorders(text: str, current_mkr: str, received_at: datetime, source:
                 if item is not None:
                     break
         if item is not None:
-            existing = aggregated.get(item.key)
-            if existing:
-                aggregated[item.key] = BackorderSnapshot(
-                    current_mkr=item.current_mkr,
-                    source_mkr=item.source_mkr,
-                    code=item.code,
-                    name=existing.name or item.name,
-                    order_qty=existing.order_qty + item.order_qty,
-                    shipped_qty=existing.shipped_qty + item.shipped_qty,
-                    received_at=item.received_at,
-                    source=item.source,
-                )
-            else:
-                aggregated[item.key] = item
+            # Repeated source-MKR + code rows in one Outlook body are usually
+            # quoted reply-chain copies.  V11.8 keeps the last snapshot instead
+            # of summing them, which prevents K/L from being multiplied.
+            aggregated[item.key] = item
             index = consumed + 1
         else:
             index += 1

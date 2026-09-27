@@ -1,155 +1,99 @@
-MKR FlowSync V12.0 Python Edition
-================================
+MKR SYNC HTML 데스크톱 앱 사용방법
+===================================
 
-1. 준비 사항
+1. 필수 환경
 -----------
 - Windows 10/11
-- Python 3.12 64비트
-- Microsoft Excel 데스크톱 앱
-- Classic Outlook 데스크톱 앱
-- Microsoft Word 데스크톱 앱
-- 인터넷 연결(최초 pywin32 설치 시 필요)
-- Classic Outlook에 hnagasawa@milbon.com 메일을 받는 회사 메일함이 연결되어 있어야 합니다.
+- Microsoft Edge WebView2 Runtime
+- Microsoft Excel 데스크톱
+- Classic Outlook 데스크톱
+- PDF 보조 판독이 필요한 경우 Microsoft Word 데스크톱
 
-새 Outlook과 Microsoft Graph는 지원하지 않습니다.
+새 Outlook, Microsoft Graph, OCR은 지원하지 않습니다.
 
-2. 최초 설치
------------
-1) ZIP의 모든 파일을 같은 폴더에 압축 해제합니다.
-2) SETUP_MKR.cmd를 더블클릭합니다.
-3) Python 환경과 pywin32 설치가 완료될 때까지 기다립니다.
-
-Python을 설치할 때는 Python 3.12 64비트를 사용하고
-"Add Python to PATH" 항목을 선택하십시오.
-
-3. 먼저 미리보기 실행
--------------------
+2. 실행
+------
 1) Classic Outlook을 엽니다.
-2) MKR_TEST.xlsx는 닫아 둡니다.
-3) DRY_RUN_MKR.cmd를 더블클릭합니다.
-4) Reports 폴더에 생성된 MKR_DRY_RUN_날짜시간.csv를 확인합니다.
+2) 작업할 Excel 파일은 닫아 둡니다.
+3) MKR_SYNC.exe를 더블클릭합니다.
 
-미리보기는 Outlook과 첨부파일을 읽지만 MKR_TEST.xlsx를 교체하지 않습니다.
-보고서의 Rule, Raw Order QTY, Sales Note Order QTY, K Total, L Total,
-Final Order QTY와 Final Shipped QTY를 확인할 수 있습니다.
+CMD나 외부 브라우저는 열리지 않습니다. HTML 화면이 MKR SYNC 창 안에 표시됩니다.
 
-4. 실제 동기화
-------------
-1) Classic Outlook을 열어 둡니다.
-2) MKR_TEST.xlsx를 닫습니다.
-3) START_MKR_SYNC.cmd를 더블클릭합니다.
+3. Excel과 MKR 시트
+------------------
+1) 대상 Excel 파일을 선택합니다.
+2) MKR 설명문을 여러 줄로 붙여넣습니다.
+3) 화면에 추출된 MKR 번호를 확인합니다.
+4) '시트 생성 및 검증'을 누릅니다.
 
-실행 순서:
-- Python 구문검사
-- 필수 수량 판정 및 파서 자체시험
-- Outlook 메일 최대 500건 검색
-- 주문 Excel과 SALES NOTE PDF 분석
-- Backup 폴더에 실행 전 원본 보존
-- 임시 Excel에 결과 저장
-- 5개 시트와 수량 재검증
-- 성공 시에만 MKR_TEST.xlsx 교체
-- 성공한 Excel 자동 실행
+예:
+MKR56/26・・・・・タイ産・アンソン向け・普通品
+MKR56/26-1・・・タイ産・アンソン向け・専用品
 
-오류가 발생하면 기존 MKR_TEST.xlsx는 교체하지 않습니다.
+MKR-20260910TG-A(T) 같은 P/O 번호는 제외됩니다.
+Excel 시트명은 MKR56_26, MKR56_26-1처럼 '/'가 '_'로 변환됩니다.
 
-5. 처리 대상
------------
-- 발신자: hnagasawa@milbon.com
-- 검색 시작일: 2026-08-01
-- 검색 상한: 기본 받은편지함의 최신 메일 500건
-- MKR48/26   -> MKR48_26
-- MKR48/26-1 -> MKR48_26-1
-- MKR49/26   -> MKR49_26
-- MKR49/26-1 -> MKR49_26-1
-- MKR56/26   -> MKR56_26
+외부 템플릿 우선순위:
+1) MKR_SYNC.exe와 같은 폴더의 MKR_TEMPLATE.xlsx
+2) settings.json에 저장된 사용자 지정 경로
+3) 사용자가 선택한 Excel 파일
 
-메일 제목의 MKR만 현재 출하 MKR로 사용합니다.
-메일 본문의 과거 MKR 번호는 Back Order NO.로만 사용합니다.
+템플릿에는 MKR_TEMPLATE 시트가 있어야 합니다. 템플릿 파일은 읽기 전용으로 사용하며 수정하지 않습니다.
+모든 대상 시트가 이미 정상이면 템플릿 파일이 없어도 다음 단계로 이동할 수 있습니다.
 
-6. Excel 기록
-------------
-A:E 신규 주문
-- Code
-- Name
-- Order QTY
-- Shipped QTY
-- Shortage QTY
+시트 생성 전 원본은 Backup 폴더에 저장됩니다. pending 파일을 모두 검증한 경우에만 원본을 교체합니다.
 
-H:M 과거 MKR 백오더
-- Back Order NO.
-- Code
-- Name
-- Order QTY
-- Shipped QTY
-- Shortage QTY
+4. Outlook 분석 및 Excel 적용
+----------------------------
+1) 발신인 이메일을 한 줄에 하나씩 입력합니다.
+2) 시작일, 최대 검색 건수(1~500), Outlook 폴더를 선택합니다.
+3) 'Outlook 데이터 미리보기'를 누릅니다.
 
-각 영역은 10~509행, 최대 500개 품목을 지원합니다.
-Shortage QTY는 Python이 MAX(0, Order QTY - Shipped QTY)로 계산한 숫자입니다.
+프로그램은 제목에서 MKR을 우선 찾고 필요하면 현재 메일 본문을 확인합니다.
+주문 Excel, Sales Note PDF, 백오더 표와 후속 ETA/ETD 메일을 분석합니다.
 
-7. V12.0 판정 규칙
+결과 화면에서 MKR 행을 선택하면 품목별 R·S·P·K·L과 적용 규칙을 볼 수 있습니다.
+Reports 폴더에는 MKR_PREVIEW_날짜시간.csv가 생성됩니다.
+첨부파일은 MKR_Attachments/Run_... 폴더에 저장됩니다.
+
+4) 오류가 없는 미리보기 결과를 확인합니다.
+5) 'Excel에 적용'을 누르고 확인 창에서 적용을 승인합니다.
+
+적용 범위:
+- A10:E509: 신규 주문 품번, 품명, Order/Shipped/Shortage QTY
+- H10:M509: 이 MKR에 포함된 백오더 번호, 품번, 품명, 수량
+- D3: MKR 번호
+- K4:K7: Order Date, Ship Date, ETA, ETD
+
+Excel 적용 전 원본은 Backup 폴더에 저장됩니다. 프로그램은 pending 파일에 먼저 기록하고 값·헤더·병합 구조를 검증한 뒤에만 원본을 교체합니다.
+미리보기 이후 Excel 파일이 변경되었거나 열려 있으면 적용하지 않고 다시 분석하도록 안내합니다.
+적용 완료 보고서는 Reports/MKR_APPLIED_날짜시간.csv로 저장됩니다.
+
+5. 수량 판정 기호
 ----------------
-품번마다 다음 순서로 판정합니다.
-
 R = 최초 원본 주문수량
-S = 최초 일반 SALES NOTE 선적수량
-P = 최초 일반 SALES NOTE 주문수량
+S = 최초 일반 Sales Note 선적수량
+P = 최초 일반 Sales Note 주문수량
 K = 백오더 Order QTY 합계
 L = 이번 MKR에 포함된 백오더 Shipped QTY 합계
 
-1) R=L, S=L, K>R이면 백오더 전용 출고: 신규 주문 0
-2) R=P이면 원주문이 이미 신규 주문만 포함: R 유지
-3) R=P+K이면 원주문에서 K를 제외: P 사용
-4) P=R+L이면 SALES NOTE에 L이 포함: R 유지
-5) R=P+L이면 원주문에 L이 포함: P 사용
-6) P가 누락되고 R>=K이면: R-K 사용
+관계가 맞지 않거나 계산 결과가 음수이면 해당 MKR을 오류로 표시합니다. 다른 MKR은 가능한 범위에서 계속 분석합니다.
 
-6번에서 S가 신규 주문보다 크면 S-L을 시도합니다.
-조정값이 0 이상이고 신규 주문 이하일 때만 사용합니다.
-
-관계가 맞지 않거나 결과가 음수이면 작업 전체를 중단합니다.
-
-8. 원본 스냅샷과 백오더
----------------------
-- 최초 원본 주문 메일의 A/B 주문 첨부를 합산합니다.
-- 동일한 파일 내용은 한 번만 계산합니다.
-- 후속 원본 복사본과 Rev 주문서는 무시합니다.
-- 최초 일반 SALES NOTE만 A:E에 사용합니다.
-- PDF 값이 우선이며 같은 메일 본문은 누락 정보만 보완합니다.
-- Rev 및 후속 SALES NOTE는 A:E를 바꾸지 않습니다.
-- 백오더 표에서 같은 과거 MKR+품번이 여러 행이면 K와 L을 각각 합산합니다.
-- 여러 메일에 같은 키가 있으면 가장 최신 스냅샷 하나만 사용합니다.
-- 현재 출하 MKR과 같은 Back Order NO. 행은 제외합니다.
-
-9. 안전 중단 조건
-----------------
-- 메일 제목에 대상 MKR이 두 개 이상 표시됨
-- 첨부파일명 또는 주문서 내부 MKR이 메일 제목과 다름
-- 수량 판정 규칙 어느 것에도 맞지 않음
-- 계산 결과가 음수
-- K가 R보다 크지만 백오더 전용 출고가 아님
-- 조정 후에도 Shipped QTY가 신규 Order QTY보다 큼
-- A:E 또는 H:M이 500행을 초과함
-- MKR_TEST.xlsx가 Excel에서 열려 있거나 다른 프로그램이 잠금
-- 임시 Excel의 시트, 헤더, 수량 또는 파일 구조 검증 실패
-- 실행 중 원본 Excel의 SHA256이 변경됨
-
-10. 로그와 복구
---------------
+6. 결과 폴더
+-----------
 - Logs: 실행 과정과 오류
-- Reports: 미리보기 또는 실제 실행 감사 CSV
-- MKR_Attachments: 실행 시 저장한 첨부파일
-- Backup: 실행 전 MKR_TEST.xlsx
+- Reports: CSV 분석 보고서
+- Backup: 시트 생성 및 데이터 적용 전 대상 Excel
+- MKR_Attachments: 실행별 Outlook 첨부파일
+- settings.json: 사용자가 선택한 템플릿 경로
 
-수량 오류 로그에는 MKR, 품번, R, S, P, K, L, 시도 규칙이 표시됩니다.
-문제가 생기면 Logs 폴더에서 가장 최근 파일을 확인하십시오.
-필요하면 Backup의 파일을 MKR_TEST.xlsx로 복사해 복구할 수 있습니다.
+오류가 발생하면 Logs에서 가장 최근 MKR_SYNC_날짜시간.log를 확인하십시오.
 
-11. 설정 변경
-------------
-config.json에서 발신자, 검색 시작일, 최대 검색량과 파일명을 확인할 수 있습니다.
-대상 MKR 5개와 행 범위는 안전 검증을 위해 V12.0에서 고정되어 있습니다.
+7. 개발 및 재빌드
+----------------
+일반 사용자는 이 단계가 필요하지 않습니다.
 
-12. 파일 무결성 확인
------------------
-SHA256SUMS.txt에는 배포 파일별 SHA256 값이 기록됩니다.
-파일이 수정되거나 누락되면 체크섬이 달라집니다.
+- BUILD_MKR_EXE.cmd: Python 3.14 64비트로 EXE 재빌드
+- 결과 위치: 현재 프로젝트 폴더의 MKR_SYNC.exe
+- requirements.txt: pywin32, pywebview, pypdf, PyInstaller
+- 기존 Tkinter 화면: python -m mkr_sync tk-gui

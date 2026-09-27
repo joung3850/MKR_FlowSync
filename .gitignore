@@ -1,4 +1,13 @@
 .venv/
+.venv314/
+.python314-embed/
+build/
+build_*/
+dist/
+dist_*/
+.codex_artifact/
+tools/python-*.exe
+tools/python-*.zip
 __pycache__/
 *.py[cod]
 .MKR_TEST_pending.xlsx

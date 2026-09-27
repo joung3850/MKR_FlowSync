@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 
 from .config import AppConfig
-from .errors import DataValidationError, OfficeAutomationError
-from .models import BackorderSnapshot, CollectedMail, MkrResult, OrderItem
-from .office import ExcelOrderReader, WordPdfReader
+from .errors import DataValidationError, MkrSyncError, OfficeAutomationError
+from .models import BackorderSnapshot, CollectedMail, MkrResult
+from .office import ExcelOrderReader, PdfTextReader
 from .parsers import (
     merge_sales_evidence,
     parse_backorders,
@@ -16,33 +15,35 @@ from .parsers import (
 )
 from .rules import build_decisions
 
-
-def _combine_order_items(destination: dict[str, OrderItem], source: dict[str, OrderItem]) -> None:
-    for code, item in source.items():
-        current = destination.get(code)
-        destination[code] = (
-            OrderItem(code, current.name or item.name, current.quantity + item.quantity)
-            if current
-            else item
-        )
-
-
-def select_first_original_order_events(events):
+def original_order_candidates(events):
     originals = sorted(
         (event for event in events if event.kind == "order" and not event.is_revision),
         key=lambda item: (item.received_at, item.original_name),
     )
-    if not originals:
-        return []
-    entry_id = originals[0].entry_id
     seen_hashes: set[str] = set()
     selected = []
     for event in originals:
-        if event.entry_id != entry_id or event.sha256 in seen_hashes:
+        if event.sha256 in seen_hashes:
             continue
         seen_hashes.add(event.sha256)
         selected.append(event)
     return selected
+
+
+def select_first_successful_order(parsed_events):
+    """Match V11.8: earliest parseable order, then the most complete file."""
+    if not parsed_events:
+        return None
+    first_received = min(event.received_at for event, _items in parsed_events)
+    same_message_time = [
+        (event, items)
+        for event, items in parsed_events
+        if event.received_at == first_received
+    ]
+    return sorted(
+        same_message_time,
+        key=lambda pair: (-len(pair[1]), pair[0].original_name.casefold()),
+    )[0]
 
 
 def merge_latest_backorders(
@@ -64,7 +65,7 @@ def validate_capacity(mkr: str, new_orders: int, backorders: int, maximum: int) 
 
 def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[MkrResult]:
     order_reader = ExcelOrderReader(logger)
-    pdf_reader = WordPdfReader()
+    pdf_reader = PdfTextReader()
     pdf_cache: dict[Path, str] = {}
     results: list[MkrResult] = []
 
@@ -91,19 +92,42 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
             logger.info("[%s] 대상 메일이 없어 기존 시트를 유지합니다.", mkr)
             continue
 
-        first_message_orders = select_first_original_order_events(events)
-        if not first_message_orders:
-            logger.warning("[%s] 최초 원본 주문 첨부가 없어 기존 시트를 유지합니다.", mkr)
-            continue
-        first_event = first_message_orders[0]
-        baseline: dict[str, OrderItem] = {}
-        for event in first_message_orders:
-            parsed = order_reader.read(event.path, mkr)
-            _combine_order_items(baseline, parsed)
-            logger.info("[%s] 최초 주문 첨부 분석: %s / %d개", mkr, event.original_name, len(parsed))
-        if not baseline:
-            logger.warning("[%s] 최초 원본 주문을 읽지 못해 기존 시트를 유지합니다.", mkr)
-            continue
+        candidates = original_order_candidates(events)
+        if not candidates:
+            raise DataValidationError(
+                f"{mkr}의 최초 원주문 첨부를 찾지 못했습니다. "
+                f"검색 시작일({config.start_date.isoformat()})을 원주문 메일 날짜 이전으로 설정해 주세요."
+            )
+
+        parsed_originals = []
+        for event in candidates:
+            try:
+                parsed = order_reader.read(event.path, mkr)
+            except MkrSyncError as exc:
+                logger.warning(
+                    "[%s] 원본 주문 후보 건너뜀: %s / %s",
+                    mkr,
+                    event.original_name,
+                    exc,
+                )
+                continue
+            logger.info("[%s] 원본 주문 후보 분석: %s / %d개", mkr, event.original_name, len(parsed))
+            if parsed:
+                parsed_originals.append((event, parsed))
+
+        selected_order = select_first_successful_order(parsed_originals)
+        if selected_order is None:
+            raise DataValidationError(
+                f"{mkr}의 원주문 후보에서 품목을 읽지 못했습니다. "
+                "검색 시작일과 원주문 첨부파일을 확인해 주세요."
+            )
+        first_event, baseline = selected_order
+        logger.info(
+            "[%s] 최초 유효 원본 주문 확정: %s / %d개",
+            mkr,
+            first_event.original_name,
+            len(baseline),
+        )
         validate_capacity(mkr, len(baseline), 0, config.max_rows)
 
         mail_by_entry = {record.entry_id: record for record in records}
@@ -112,9 +136,22 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
         ship_date = eta = etd = None
         if normal_sales:
             first_sales = normal_sales[0]
-            pdf_evidence = parse_sales_note(read_pdf(first_sales.path))
-            body_evidence = parse_sales_note(first_sales.body)
-            sales_evidence = merge_sales_evidence(pdf_evidence, body_evidence)
+            first_sales_evidence = {}
+            for candidate in normal_sales:
+                pdf_evidence = parse_sales_note(read_pdf(candidate.path))
+                body_evidence = parse_sales_note(candidate.body)
+                candidate_evidence = merge_sales_evidence(pdf_evidence, body_evidence)
+                logger.info(
+                    "[%s] 일반 SALES NOTE 후보 분석: %s / %d개 품목",
+                    mkr,
+                    candidate.original_name,
+                    len(candidate_evidence),
+                )
+                if candidate_evidence:
+                    first_sales = candidate
+                    first_sales_evidence = candidate_evidence
+                    break
+            sales_evidence = first_sales_evidence
             source_record = mail_by_entry.get(first_sales.entry_id)
             if source_record:
                 reference = source_record.received_at
@@ -133,6 +170,23 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
             )
         else:
             logger.warning("[%s] 일반 SALES NOTE가 없어 Shipped QTY fallback을 적용합니다.", mkr)
+
+        # Follow-up schedule messages override earlier values only when they
+        # contain an explicit date. This keeps the first Sales Note as the
+        # quantity baseline while allowing later ETA/ETD updates.
+        for record in records:
+            reference = record.received_at
+            ship_date = parse_date_near_keywords(
+                record.body,
+                r"\b(?:Ship|Shipment|Shipping)\s*Date\b|出荷日|発送日|출하일|선적일",
+                reference,
+            ) or ship_date
+            eta = parse_date_near_keywords(
+                record.body, r"\bETA\b|到着予定|着港|도착예정", reference
+            ) or eta
+            etd = parse_date_near_keywords(
+                record.body, r"\bETD\b|出港|船積|출항", reference
+            ) or etd
 
         sales_by_entry = defaultdict(list)
         for event in events:

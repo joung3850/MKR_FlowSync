@@ -29,11 +29,16 @@ REPORT_FIELDS = (
 )
 
 
-def write_audit_report(root: Path, results: Iterable[MkrResult], dry_run: bool) -> Path:
+def write_audit_report(
+    root: Path,
+    results: Iterable[MkrResult],
+    dry_run: bool,
+    prefix: str | None = None,
+) -> Path:
     report_dir = root / "Reports"
     report_dir.mkdir(parents=True, exist_ok=True)
-    prefix = "MKR_DRY_RUN" if dry_run else "MKR_AUDIT"
-    path = report_dir / f"{prefix}_{datetime.now():%Y%m%d_%H%M%S}.csv"
+    report_prefix = prefix or ("MKR_DRY_RUN" if dry_run else "MKR_AUDIT")
+    path = report_dir / f"{report_prefix}_{datetime.now():%Y%m%d_%H%M%S}.csv"
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=REPORT_FIELDS)
         writer.writeheader()

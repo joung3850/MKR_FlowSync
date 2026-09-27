@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Literal
 
 
 ZERO = Decimal("0")
@@ -105,3 +106,60 @@ class CollectedMail:
     records: list[MailRecord] = field(default_factory=list)
     attachments: list[AttachmentEvent] = field(default_factory=list)
     scanned: int = 0
+
+
+@dataclass(frozen=True)
+class SheetCreationRequest:
+    target_workbook: Path
+    template_workbook: Path | None
+    mkr_numbers: list[str]
+
+
+@dataclass(frozen=True)
+class PreviewRequest:
+    target_workbook: Path
+    mkr_numbers: list[str]
+    senders: list[str]
+    outlook_folder_id: str
+    start_date: date
+    max_messages: int
+
+
+@dataclass(frozen=True)
+class AnalysisIssue:
+    level: Literal["warning", "error"]
+    code: str
+    message: str
+    mkr: str | None = None
+
+    def as_dict(self) -> dict[str, str | None]:
+        return {
+            "level": self.level,
+            "code": self.code,
+            "message": self.message,
+            "mkr": self.mkr,
+        }
+
+
+@dataclass
+class JobStatus:
+    job_id: str
+    state: Literal["queued", "running", "completed", "failed", "cancelled"]
+    phase: str
+    progress: int
+    message: str
+    result: dict | None = None
+    warnings: list[AnalysisIssue] = field(default_factory=list)
+    errors: list[AnalysisIssue] = field(default_factory=list)
+
+    def as_dict(self) -> dict:
+        return {
+            "job_id": self.job_id,
+            "state": self.state,
+            "phase": self.phase,
+            "progress": self.progress,
+            "message": self.message,
+            "result": self.result,
+            "warnings": [item.as_dict() for item in self.warnings],
+            "errors": [item.as_dict() for item in self.errors],
+        }

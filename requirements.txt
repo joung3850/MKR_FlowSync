@@ -1,1 +1,4 @@
-pywin32==311
+pywin32==312
+pywebview==6.2.1
+pypdf==6.18.1
+pyinstaller>=6.16

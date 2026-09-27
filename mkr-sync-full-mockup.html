@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MKR SYNC 전체 기능 목업</title>
+  <style>
+    :root {
+      --navy: #13263f;
+      --navy-2: #203a5c;
+      --text: #25364d;
+      --muted: #6b778b;
+      --line: #dce3ec;
+      --soft-line: #e9eef4;
+      --panel: #ffffff;
+      --canvas: #eef3f8;
+      --soft: #f7f9fc;
+      --green: #0b8f59;
+      --green-dark: #087046;
+      --green-soft: #e9f7f0;
+      --blue: #246fce;
+      --blue-soft: #eaf3ff;
+      --orange: #c96b12;
+      --orange-soft: #fff5e8;
+      --red: #c43c45;
+      --red-soft: #fff0f1;
+      --shadow: 0 22px 60px rgba(33, 56, 85, 0.16);
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      min-height: 100vh;
+      padding: 28px;
+      color: var(--text);
+      background:
+        radial-gradient(circle at 10% 0%, rgba(36, 111, 206, 0.08), transparent 28%),
+        var(--canvas);
+      font-family: "Malgun Gothic", "Apple SD Gothic Neo", "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button { cursor: pointer; }
+
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    summary:focus-visible {
+      outline: 3px solid rgba(36, 111, 206, 0.25);
+      outline-offset: 2px;
+    }
+
+    .app-window {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      overflow: hidden;
+      border: 1px solid #cbd5e1;
+      border-radius: 14px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .window-bar {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 15px;
+      color: #e8eef6;
+      background: var(--navy);
+      user-select: none;
+    }
+
+    .window-icon {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 5px;
+      color: #fff;
+      background: #107c41;
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .window-title {
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .window-subtitle {
+      color: #aebdd0;
+      font-size: 12px;
+    }
+
+    .window-actions {
+      display: flex;
+      align-self: stretch;
+      margin-left: auto;
+    }
+
+    .window-action {
+      width: 42px;
+      display: grid;
+      place-items: center;
+      color: #dbe5f0;
+      font-size: 13px;
+    }
+
+    .app-header {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 25px 30px 21px;
+      border-bottom: 1px solid var(--soft-line);
+    }
+
+    .brand-mark {
+      width: 48px;
+      height: 48px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      color: white;
+      background: linear-gradient(135deg, #12804a, #0a6238);
+      box-shadow: 0 8px 18px rgba(16, 124, 65, 0.22);
+      font-size: 25px;
+      font-weight: 800;
+    }
+
+    .brand-copy h1 {
+      margin: 0;
+      color: var(--navy);
+      font-size: 24px;
+      line-height: 1.25;
+      letter-spacing: -0.5px;
+    }
+
+    .brand-copy p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      margin-left: auto;
+    }
+
+    .mock-badge {
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .step-rail {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0;
+      padding: 19px 30px;
+      border-bottom: 1px solid var(--soft-line);
+      background: var(--soft);
+    }
+
+    .rail-step {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .rail-step:not(:last-child)::after {
+      content: "";
+      position: absolute;
+      top: 15px;
+      left: 37px;
+      right: 13px;
+      height: 2px;
+      background: var(--line);
+    }
+
+    .rail-step.done:not(:last-child)::after {
+      background: var(--green);
+    }
+
+    .rail-number {
+      position: relative;
+      z-index: 1;
+      width: 30px;
+      height: 30px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border: 2px solid var(--line);
+      border-radius: 50%;
+      color: var(--muted);
+      background: var(--panel);
+    }
+
+    .rail-step.active { color: var(--blue); }
+    .rail-step.active .rail-number {
+      border-color: var(--blue);
+      color: white;
+      background: var(--blue);
+    }
+
+    .rail-step.done { color: var(--green-dark); }
+    .rail-step.done .rail-number {
+      border-color: var(--green);
+      color: white;
+      background: var(--green);
+    }
+
+    .rail-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .content {
+      padding: 26px 30px 34px;
+      background: #fbfcfe;
+    }
+
+    .section {
+      margin-bottom: 22px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      box-shadow: 0 3px 10px rgba(43, 67, 96, 0.04);
+    }
+
+    .section.disabled-section {
+      opacity: 0.68;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 19px 21px;
+      border-bottom: 1px solid var(--soft-line);
+    }
+
+    .section-number {
+      width: 29px;
+      height: 29px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      color: white;
+      background: var(--navy-2);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .section-title h2 {
+      margin: 0;
+      color: var(--navy);
+      font-size: 17px;
+      line-height: 1.35;
+      letter-spacing: -0.25px;
+    }
+
+    .section-title p {
+      margin: 3px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .section-status {
+      margin-left: auto;
+      padding: 5px 9px;
+      border-radius: 999px;
+      color: var(--muted);
+      background: #eef2f6;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .section-status.ready {
+      color: var(--green-dark);
+      background: var(--green-soft);
+    }
+
+    .section-status.running {
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .section-status.error {
+      color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .section-body { padding: 21px; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 18px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: 1.35fr 1fr 1fr 0.8fr;
+      gap: 14px;
+    }
+
+    .field { min-width: 0; }
+
+    .field + .field { margin-top: 16px; }
+
+    .field-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .field label,
+    .field-label {
+      display: block;
+      color: var(--navy);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .field-hint {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .input,
+    .select,
+    .textarea,
+    .file-display {
+      width: 100%;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      color: var(--text);
+      background: white;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    .input,
+    .select,
+    .file-display {
+      min-height: 43px;
+      padding: 0 12px;
+    }
+
+    .textarea {
+      min-height: 150px;
+      padding: 11px 12px;
+      resize: vertical;
+      line-height: 1.65;
+    }
+
+    .input:focus,
+    .select:focus,
+    .textarea:focus {
+      border-color: var(--blue);
+      outline: none;
+      box-shadow: 0 0 0 3px rgba(36, 111, 206, 0.11);
+    }
+
+    .file-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 9px;
+    }
+
+    .file-display {
+      display: flex;
+      align-items: center;
+      overflow: hidden;
+      color: var(--muted);
+      background: var(--soft);
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    input[type="file"] {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+      clip-path: inset(50%);
+    }
+
+    .button {
+      min-height: 41px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 0 14px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      transition: transform 0.12s, background 0.15s, border-color 0.15s, opacity 0.15s;
+    }
+
+    .button:hover:not(:disabled) { transform: translateY(-1px); }
+    .button:active:not(:disabled) { transform: translateY(0); }
+    .button:disabled {
+      cursor: not-allowed;
+      opacity: 0.46;
+    }
+
+    .button.primary {
+      color: white;
+      background: var(--blue);
+      box-shadow: 0 5px 13px rgba(36, 111, 206, 0.18);
+    }
+
+    .button.success {
+      color: white;
+      background: var(--green);
+      box-shadow: 0 5px 13px rgba(11, 143, 89, 0.18);
+    }
+
+    .button.secondary {
+      border-color: #bfcbd9;
+      color: var(--navy-2);
+      background: white;
+    }
+
+    .button.ghost {
+      border-color: transparent;
+      color: var(--blue);
+      background: var(--blue-soft);
+    }
+
+    .button.small {
+      min-height: 34px;
+      padding: 0 10px;
+      font-size: 11px;
+    }
+
+    .button-row {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-top: 18px;
+    }
+
+    .mkr-preview {
+      min-height: 150px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+    }
+
+    .empty-state {
+      min-height: 126px;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      color: var(--muted);
+      text-align: center;
+      font-size: 12px;
+    }
+
+    .mkr-list {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .mkr-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 8px 10px;
+      border: 1px solid #dfe6ef;
+      border-radius: 7px;
+      color: var(--navy-2);
+      background: white;
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .arrow { color: #9aa8ba; }
+
+    .count-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
+      height: 22px;
+      padding: 0 7px;
+      border-radius: 999px;
+      color: var(--blue);
+      background: var(--blue-soft);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .result-box {
+      margin-top: 17px;
+      padding: 13px 14px;
+      border: 1px solid #c8e7d8;
+      border-radius: 8px;
+      color: var(--green-dark);
+      background: var(--green-soft);
+      font-size: 12px;
+    }
+
+    .result-box.error {
+      border-color: #f0c4c7;
+      color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .result-box ul {
+      margin: 7px 0 0;
+      padding-left: 18px;
+    }
+
+    details.settings {
+      margin-top: 17px;
+      border-top: 1px solid var(--soft-line);
+      padding-top: 14px;
+    }
+
+    details.settings summary {
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .mock-option {
+      display: grid;
+      grid-template-columns: minmax(0, 260px) minmax(0, 1fr);
+      align-items: end;
+      gap: 14px;
+      margin-top: 14px;
+      padding: 13px;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .mock-note {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .progress-wrap {
+      margin-top: 16px;
+      padding: 14px;
+      border-radius: 9px;
+      background: var(--soft);
+    }
+
+    .progress-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 9px;
+      color: var(--navy-2);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .progress-track {
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #dfe6ef;
+    }
+
+    .progress-bar {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--blue), #46a0ed);
+      transition: width 0.4s ease;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 18px 0;
+    }
+
+    .metric {
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: white;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .metric-value {
+      margin-top: 3px;
+      color: var(--navy);
+      font-size: 23px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+
+    .metric-unit {
+      margin-left: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 400;
+    }
+
+    .alert {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin: 11px 0;
+      padding: 12px 14px;
+      border: 1px solid;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .alert-icon {
+      width: 20px;
+      height: 20px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .alert.warning {
+      border-color: #efd3a8;
+      color: #915016;
+      background: var(--orange-soft);
+    }
+
+    .alert.warning .alert-icon {
+      color: white;
+      background: var(--orange);
+    }
+
+    .alert.error {
+      border-color: #edbfc3;
+      color: #9e2831;
+      background: var(--red-soft);
+    }
+
+    .alert.error .alert-icon {
+      color: white;
+      background: var(--red);
+    }
+
+    .alert.success {
+      border-color: #bee2d0;
+      color: var(--green-dark);
+      background: var(--green-soft);
+    }
+
+    .alert.success .alert-icon {
+      color: white;
+      background: var(--green);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 820px;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    th,
+    td {
+      padding: 10px 11px;
+      border-bottom: 1px solid var(--soft-line);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      color: #53637a;
+      background: #f5f7fa;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    td.number,
+    th.number { text-align: right; }
+
+    tbody tr:last-child td { border-bottom: 0; }
+
+    tbody tr.result-row {
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    tbody tr.result-row:hover,
+    tbody tr.result-row.selected {
+      background: #eef6ff;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .status-pill.ok {
+      color: var(--green-dark);
+      background: var(--green-soft);
+    }
+
+    .status-pill.warn {
+      color: #98551a;
+      background: var(--orange-soft);
+    }
+
+    .status-pill.bad {
+      color: var(--red);
+      background: var(--red-soft);
+    }
+
+    .detail-panel {
+      margin-top: 15px;
+    }
+
+    .detail-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .detail-title h3 {
+      margin: 0;
+      color: var(--navy);
+      font-size: 13px;
+    }
+
+    .detail-title p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .footer-actions {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 19px;
+      padding-top: 17px;
+      border-top: 1px solid var(--soft-line);
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .log-panel {
+      margin-top: 22px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+
+    .log-panel summary {
+      padding: 13px 15px;
+      color: var(--navy-2);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .log-lines {
+      max-height: 210px;
+      overflow: auto;
+      margin: 0;
+      padding: 13px 15px;
+      border-top: 1px solid var(--soft-line);
+      color: #526179;
+      background: #f7f9fb;
+      font: 11px/1.7 Consolas, "Courier New", monospace;
+      white-space: pre-wrap;
+    }
+
+    .hidden { display: none !important; }
+
+    @media (prefers-reduced-motion: reduce) {
+      * {
+        scroll-behavior: auto !important;
+        transition: none !important;
+      }
+    }
+
+    @media (max-width: 900px) {
+      body { padding: 12px; }
+      .app-window { border-radius: 10px; }
+      .content { padding: 20px; }
+      .app-header { padding: 20px; }
+      .step-rail { padding: 15px 20px; }
+      .grid-2,
+      .grid-4 { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .mock-option { grid-template-columns: 1fr; }
+    }
+
+    @media (max-width: 620px) {
+      body { padding: 0; }
+      .app-window {
+        border: 0;
+        border-radius: 0;
+      }
+      .window-subtitle,
+      .window-actions,
+      .mock-badge { display: none; }
+      .app-header {
+        align-items: flex-start;
+        padding: 17px;
+      }
+      .brand-mark {
+        width: 40px;
+        height: 40px;
+        font-size: 21px;
+      }
+      .brand-copy h1 { font-size: 20px; }
+      .header-actions { margin-left: auto; }
+      .step-rail {
+      grid-template-columns: repeat(3, 30px);
+        justify-content: space-between;
+        padding: 12px 17px;
+      }
+      .rail-label { display: none; }
+      .rail-step:not(:last-child)::after {
+        left: 30px;
+        right: -45px;
+      }
+      .content { padding: 15px; }
+      .section-head,
+      .section-body { padding: 15px; }
+      .file-row { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: 1fr 1fr; }
+      .footer-actions {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .footer-actions .button { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app-window" aria-label="MKR SYNC 전체 기능 목업">
+    <div class="window-bar">
+      <div class="window-icon" aria-hidden="true">X</div>
+      <span class="window-title">MKR SYNC</span>
+      <span class="window-subtitle">Python Desktop Application</span>
+      <div class="window-actions" aria-hidden="true">
+        <span class="window-action">—</span>
+        <span class="window-action">□</span>
+        <span class="window-action">×</span>
+      </div>
+    </div>
+
+    <header class="app-header">
+      <div class="brand-mark" aria-hidden="true">M</div>
+      <div class="brand-copy">
+        <h1>MKR SYNC</h1>
+        <p>MKR 시트 생성 · Outlook 메일 분석 · Excel 데이터 입력</p>
+      </div>
+      <div class="header-actions">
+        <span class="mock-badge">전체 기능 목업</span>
+        <button class="button secondary small" id="resetButton" type="button">초기화</button>
+      </div>
+    </header>
+
+    <nav class="step-rail" aria-label="작업 단계">
+      <div class="rail-step active" data-rail-step="1">
+        <span class="rail-number">1</span>
+        <span class="rail-label">Excel 및 MKR</span>
+      </div>
+      <div class="rail-step" data-rail-step="2">
+        <span class="rail-number">2</span>
+        <span class="rail-label">Outlook 설정</span>
+      </div>
+      <div class="rail-step" data-rail-step="3">
+        <span class="rail-number">3</span>
+        <span class="rail-label">분석 미리보기</span>
+      </div>
+    </nav>
+
+    <div class="content">
+      <section class="section" id="excelSection">
+        <div class="section-head">
+          <div class="section-number">1</div>
+          <div class="section-title">
+            <h2>Excel 파일과 MKR 대상 설정</h2>
+            <p>설명문에서 MKR 번호를 추출하고 필요한 시트를 준비합니다.</p>
+          </div>
+          <span class="section-status" id="sheetStatus">입력 대기</span>
+        </div>
+        <div class="section-body">
+          <div class="grid-2">
+            <div>
+              <div class="field">
+                <div class="field-label-row">
+                  <label for="excelFile">Excel 파일</label>
+                  <span class="field-hint">.xlsx 또는 .xlsm</span>
+                </div>
+                <div class="file-row">
+                  <div class="file-display" id="fileName">선택된 파일 없음</div>
+                  <label class="button secondary" for="excelFile">파일 선택</label>
+                  <input id="excelFile" type="file" accept=".xlsx,.xlsm" />
+                </div>
+              </div>
+
+              <div class="field">
+                <div class="field-label-row">
+                  <label for="mkrInput">MKR 번호 또는 설명문</label>
+                  <button class="button ghost small" id="loadExampleButton" type="button">예시 불러오기</button>
+                </div>
+                <textarea
+                  class="textarea"
+                  id="mkrInput"
+                  placeholder="여러 줄의 MKR 설명문을 붙여넣으세요.&#10;예: MKR56/26・・・・・タイ産・アンソン向け・普通品"
+                  spellcheck="false"
+                ></textarea>
+              </div>
+            </div>
+
+            <div>
+              <div class="field-label-row">
+                <span class="field-label">추출된 MKR 번호</span>
+                <span class="count-badge" id="mkrCount">0</span>
+              </div>
+              <div class="mkr-preview" id="mkrPreview" aria-live="polite">
+                <div class="empty-state">설명문을 입력하면 MKR 번호와 생성될 시트명이 여기에 표시됩니다.</div>
+              </div>
+              <div class="result-box hidden" id="sheetResult" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button class="button primary" id="createSheetsButton" type="button">시트 생성</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section disabled-section" id="outlookSection" aria-disabled="true">
+        <div class="section-head">
+          <div class="section-number">2</div>
+          <div class="section-title">
+            <h2>Outlook 분석 설정</h2>
+            <p>Classic Outlook에서 검색할 발신인, 폴더와 기간을 설정합니다.</p>
+          </div>
+          <span class="section-status" id="outlookStatus">시트 준비 필요</span>
+        </div>
+        <div class="section-body">
+          <div class="grid-4">
+            <div class="field">
+              <div class="field-label-row">
+                <label for="senders">발신인 이메일</label>
+                <span class="field-hint">줄바꿈 또는 쉼표 구분</span>
+              </div>
+              <textarea class="textarea" id="senders" style="min-height: 96px;" disabled>hnagasawa@milbon.com
+shipping@sample.co.jp</textarea>
+            </div>
+
+            <div class="field">
+              <div class="field-label-row">
+                <label for="startDate">검색 시작일</label>
+              </div>
+              <input class="input" id="startDate" type="date" value="2026-08-01" disabled />
+            </div>
+
+            <div class="field">
+              <div class="field-label-row">
+                <label for="outlookFolder">Outlook 폴더</label>
+              </div>
+              <select class="select" id="outlookFolder" disabled>
+                <option>받은편지함</option>
+                <option>받은편지함 / MKR</option>
+                <option>받은편지함 / Shipping</option>
+              </select>
+            </div>
+
+            <div class="field">
+              <div class="field-label-row">
+                <label for="maxMessages">최대 메일 수</label>
+              </div>
+              <input class="input" id="maxMessages" type="number" min="1" max="500" value="500" disabled />
+            </div>
+          </div>
+
+          <details class="settings">
+            <summary>목업 테스트 옵션</summary>
+            <div class="mock-option">
+              <div class="field">
+                <div class="field-label-row">
+                  <label for="mockScenario">미리보기 시나리오</label>
+                </div>
+                <select class="select" id="mockScenario" disabled>
+                  <option value="warning">정상 처리 + 경고 1건</option>
+                  <option value="normal">오류·경고 없음</option>
+                  <option value="error">수량 판정 오류 1건</option>
+                </select>
+              </div>
+              <p class="mock-note">
+                이 항목은 오류와 경고 화면을 확인하기 위한 HTML 목업 전용 기능입니다. 실제 EXE에는 표시되지 않습니다.
+              </p>
+            </div>
+          </details>
+
+          <div class="button-row">
+            <button class="button primary" id="previewButton" type="button" disabled>Outlook 데이터 미리보기</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section disabled-section" id="previewSection" aria-disabled="true">
+        <div class="section-head">
+          <div class="section-number">3</div>
+          <div class="section-title">
+            <h2>분석 결과 미리보기</h2>
+            <p>Excel을 변경하기 전에 메일, 첨부파일과 수량 판정 결과를 확인합니다.</p>
+          </div>
+          <span class="section-status" id="previewStatus">분석 전</span>
+        </div>
+        <div class="section-body">
+          <div class="empty-state" id="previewEmpty">
+            시트 준비 후 Outlook 데이터 미리보기를 실행해 주세요.
+          </div>
+
+          <div class="hidden" id="previewContent">
+            <div class="progress-wrap" id="analysisProgress">
+              <div class="progress-meta">
+                <span id="analysisProgressLabel">분석 준비</span>
+                <span id="analysisProgressValue">0%</span>
+              </div>
+              <div
+                class="progress-track"
+                role="progressbar"
+                aria-label="Outlook 분석 진행률"
+                aria-valuemin="0"
+                aria-valuemax="100"
+                aria-valuenow="0"
+                id="analysisProgressTrack"
+              >
+                <div class="progress-bar" id="analysisProgressBar"></div>
+              </div>
+            </div>
+
+            <div class="hidden" id="analysisResults">
+              <div class="metric-grid">
+                <div class="metric">
+                  <div class="metric-label">조회한 메일</div>
+                  <div class="metric-value">269<span class="metric-unit">건</span></div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">대상 메일</div>
+                  <div class="metric-value">53<span class="metric-unit">건</span></div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">분석 첨부파일</div>
+                  <div class="metric-value">32<span class="metric-unit">개</span></div>
+                </div>
+                <div class="metric">
+                  <div class="metric-label">대상 MKR</div>
+                  <div class="metric-value" id="summaryMkrCount">0<span class="metric-unit">개</span></div>
+                </div>
+              </div>
+
+              <div id="issueArea" aria-live="polite"></div>
+
+              <div class="table-wrap">
+                <table aria-label="MKR별 분석 결과">
+                  <thead>
+                    <tr>
+                      <th>MKR</th>
+                      <th>시트</th>
+                      <th class="number">주문 품목</th>
+                      <th class="number">백오더</th>
+                      <th>Ship Date</th>
+                      <th>ETA</th>
+                      <th>ETD</th>
+                      <th>상태</th>
+                    </tr>
+                  </thead>
+                  <tbody id="resultTableBody"></tbody>
+                </table>
+              </div>
+
+              <div class="detail-panel">
+                <div class="detail-title">
+                  <div>
+                    <h3 id="detailHeading">품목별 수량 판정</h3>
+                    <p>R 최초 주문 · S 최초 출하 · P Sales Note 주문 · K/L 백오더</p>
+                  </div>
+                  <span class="count-badge" id="detailRuleCount">0</span>
+                </div>
+                <div class="table-wrap">
+                  <table aria-label="품목별 수량 판정 상세">
+                    <thead>
+                      <tr>
+                        <th>Code</th>
+                        <th class="number">R</th>
+                        <th class="number">S</th>
+                        <th class="number">P</th>
+                        <th class="number">K</th>
+                        <th class="number">L</th>
+                        <th class="number">최종 주문</th>
+                        <th class="number">최종 출하</th>
+                        <th class="number">부족</th>
+                        <th>적용 규칙</th>
+                      </tr>
+                    </thead>
+                    <tbody id="detailTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div class="footer-actions">
+                <p class="footer-note" id="previewFooterNote">
+                  이 목업은 Outlook 분석 결과 확인까지만 제공합니다. 실제 Excel 입력은 다음 구현 단계에서 연결합니다.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <details class="log-panel">
+        <summary>실행 로그 보기</summary>
+        <pre class="log-lines" id="logLines">[대기] MKR SYNC 전체 기능 목업이 준비되었습니다.</pre>
+      </details>
+    </div>
+  </main>
+
+  <script>
+    (function () {
+      "use strict";
+
+      var exampleText = [
+        "MKR56/26・・・・・タイ産・アンソン向け・普通品",
+        "MKR56/26-1・・・タイ産・アンソン向け・専用品",
+        "MKR56/26-2・・・タイ産・アンソン向け・専用品（P/O No.：MKR-20260910TG-A(T）",
+        "MKR57/26・・・・・タイ産・ピョンテク向け・普通品",
+        "MKR58/26・・・・・日本産・アンソン向け・普通品",
+        "MKR58/26-1・・・日本産・アンソン向け・危険品",
+        "MKR59/26・・・・・日本産・ピョンテク向け・普通品",
+        "MKR59/26-1・・・日本産・ピョンテク向け・危険品"
+      ].join("\n");
+
+      var state = {
+        fileName: "",
+        mkrs: [],
+        sheetsReady: false,
+        previewReady: false,
+        hasBlockingError: false,
+        selectedMkr: "",
+        busy: false
+      };
+
+      var byId = function (id) { return document.getElementById(id); };
+      var excelFile = byId("excelFile");
+      var fileName = byId("fileName");
+      var mkrInput = byId("mkrInput");
+      var mkrPreview = byId("mkrPreview");
+      var mkrCount = byId("mkrCount");
+      var sheetResult = byId("sheetResult");
+      var createSheetsButton = byId("createSheetsButton");
+      var previewButton = byId("previewButton");
+      var logLines = byId("logLines");
+
+      function nowTime() {
+        return new Date().toLocaleTimeString("ko-KR", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false
+        });
+      }
+
+      function appendLog(message, level) {
+        var label = level || "정보";
+        logLines.textContent += "\n[" + nowTime() + "] [" + label + "] " + message;
+        logLines.scrollTop = logLines.scrollHeight;
+      }
+
+      function extractMkrs(text) {
+        var pattern = /MKR\s*(\d{1,3})\s*\/\s*(\d{2})(?:\s*-\s*(\d+))?/gi;
+        var seen = Object.create(null);
+        var values = [];
+        var match;
+        while ((match = pattern.exec(text)) !== null) {
+          var value = "MKR" + match[1] + "/" + match[2] + (match[3] ? "-" + match[3] : "");
+          if (!seen[value]) {
+            seen[value] = true;
+            values.push(value);
+          }
+        }
+        return values;
+      }
+
+      function sheetNameFor(mkr) {
+        return mkr.replace("/", "_");
+      }
+
+      function renderMkrPreview() {
+        state.mkrs = extractMkrs(mkrInput.value);
+        mkrCount.textContent = String(state.mkrs.length);
+        sheetResult.classList.add("hidden");
+        state.sheetsReady = false;
+        state.previewReady = false;
+        state.hasBlockingError = false;
+        disableAfterInputChange();
+
+        if (!state.mkrs.length) {
+          mkrPreview.innerHTML = '<div class="empty-state">설명문을 입력하면 MKR 번호와 생성될 시트명이 여기에 표시됩니다.</div>';
+          return;
+        }
+
+        var list = document.createElement("ul");
+        list.className = "mkr-list";
+        state.mkrs.forEach(function (mkr) {
+          var item = document.createElement("li");
+          item.className = "mkr-item";
+          item.innerHTML = "<span>" + escapeHtml(mkr) + '</span><span class="arrow">→</span><span>' +
+            escapeHtml(sheetNameFor(mkr)) + "</span>";
+          list.appendChild(item);
+        });
+        mkrPreview.innerHTML = "";
+        mkrPreview.appendChild(list);
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function setSectionEnabled(sectionId, enabled) {
+        var section = byId(sectionId);
+        section.classList.toggle("disabled-section", !enabled);
+        section.setAttribute("aria-disabled", enabled ? "false" : "true");
+      }
+
+      function setStatus(id, text, kind) {
+        var status = byId(id);
+        status.textContent = text;
+        status.className = "section-status" + (kind ? " " + kind : "");
+      }
+
+      function updateRail(activeStep, completedThrough) {
+        document.querySelectorAll("[data-rail-step]").forEach(function (step) {
+          var value = Number(step.getAttribute("data-rail-step"));
+          step.classList.toggle("done", value <= completedThrough);
+          step.classList.toggle("active", value === activeStep);
+        });
+      }
+
+      function setOutlookInputs(enabled) {
+        ["senders", "startDate", "outlookFolder", "maxMessages", "mockScenario"].forEach(function (id) {
+          byId(id).disabled = !enabled;
+        });
+        previewButton.disabled = !enabled;
+      }
+
+      function disableAfterInputChange() {
+        setSectionEnabled("outlookSection", false);
+        setSectionEnabled("previewSection", false);
+        setOutlookInputs(false);
+        previewButton.disabled = true;
+        byId("previewContent").classList.add("hidden");
+        byId("previewEmpty").classList.remove("hidden");
+        setStatus("sheetStatus", "입력 대기", "");
+        setStatus("outlookStatus", "시트 준비 필요", "");
+        setStatus("previewStatus", "분석 전", "");
+        updateRail(1, 0);
+      }
+
+      function validateSheetInputs() {
+        if (!state.fileName) {
+          showSheetError("Excel 파일을 먼저 선택해 주세요.");
+          return false;
+        }
+        if (!state.mkrs.length) {
+          showSheetError("설명문에서 MKR 번호를 찾지 못했습니다.");
+          mkrInput.focus();
+          return false;
+        }
+        return true;
+      }
+
+      function showSheetError(message) {
+        sheetResult.className = "result-box error";
+        sheetResult.textContent = message;
+        setStatus("sheetStatus", "확인 필요", "error");
+        appendLog(message, "오류");
+      }
+
+      function sleep(milliseconds) {
+        return new Promise(function (resolve) {
+          window.setTimeout(resolve, milliseconds);
+        });
+      }
+
+      async function simulateSheetCreation() {
+        if (state.busy) return;
+        state.busy = true;
+        createSheetsButton.disabled = true;
+        setStatus("sheetStatus", "시트 생성 중", "running");
+        appendLog("선택한 Excel의 기존 시트 구조 확인");
+        await sleep(350);
+        appendLog("전체 대상 시트 사전 검증 완료: " + state.mkrs.length + "개");
+        await sleep(350);
+        appendLog("대상 MKR 시트 생성 준비 중");
+        await sleep(450);
+
+        var items = state.mkrs.map(function (mkr, index) {
+          var action = index === 0 ? "기존 시트 확인" : "신규 생성";
+          return "<li>" + escapeHtml(sheetNameFor(mkr)) + " — " + action + "</li>";
+        }).join("");
+
+        sheetResult.className = "result-box";
+        sheetResult.innerHTML = "<strong>시트 생성 준비가 완료되었습니다.</strong><ul>" + items + "</ul>";
+        state.sheetsReady = true;
+        state.busy = false;
+        createSheetsButton.disabled = false;
+        setStatus("sheetStatus", state.mkrs.length + "개 시트 준비 완료", "ready");
+        setSectionEnabled("outlookSection", true);
+        setOutlookInputs(true);
+        setStatus("outlookStatus", "설정 가능", "ready");
+        updateRail(2, 1);
+        appendLog("시트 생성 및 구조 검증 완료", "성공");
+        byId("outlookSection").scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+
+      function parseSenders() {
+        return byId("senders").value
+          .split(/[\n,;]+/)
+          .map(function (value) { return value.trim().toLowerCase(); })
+          .filter(Boolean);
+      }
+
+      function validEmail(value) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+      }
+
+      function validateOutlookSettings() {
+        var senders = parseSenders();
+        if (!senders.length || senders.some(function (value) { return !validEmail(value); })) {
+          setStatus("outlookStatus", "발신인 확인 필요", "error");
+          appendLog("유효한 발신인 이메일을 입력해 주세요.", "오류");
+          byId("senders").focus();
+          return false;
+        }
+        var max = Number(byId("maxMessages").value);
+        if (!max || max < 1 || max > 500) {
+          setStatus("outlookStatus", "검색 수 확인 필요", "error");
+          appendLog("최대 메일 수는 1~500이어야 합니다.", "오류");
+          byId("maxMessages").focus();
+          return false;
+        }
+        if (!byId("startDate").value) {
+          setStatus("outlookStatus", "시작일 확인 필요", "error");
+          appendLog("검색 시작일을 선택해 주세요.", "오류");
+          byId("startDate").focus();
+          return false;
+        }
+        return true;
+      }
+
+      async function runPreview() {
+        if (state.busy || !state.sheetsReady || !validateOutlookSettings()) return;
+        state.busy = true;
+        state.previewReady = false;
+        state.hasBlockingError = false;
+        previewButton.disabled = true;
+        setSectionEnabled("previewSection", true);
+        byId("previewEmpty").classList.add("hidden");
+        byId("previewContent").classList.remove("hidden");
+        byId("analysisResults").classList.add("hidden");
+        byId("analysisProgress").classList.remove("hidden");
+        setStatus("outlookStatus", "Outlook 분석 중", "running");
+        setStatus("previewStatus", "분석 중", "running");
+        updateRail(3, 2);
+        byId("previewSection").scrollIntoView({ behavior: "smooth", block: "start" });
+
+        var phases = [
+          [10, "Classic Outlook 연결 확인"],
+          [27, "선택한 폴더에서 메일 269건 검색"],
+          [44, "발신인과 대상 MKR 분류"],
+          [62, "주문서 및 Sales Note 첨부파일 분석"],
+          [81, "백오더 병합과 수량 규칙 적용"],
+          [94, "날짜 및 품목 오류 검증"],
+          [100, "미리보기 보고서 생성"]
+        ];
+
+        appendLog("Outlook 미리보기 시작: " + parseSenders().length + "명 / " + byId("outlookFolder").value);
+        for (var i = 0; i < phases.length; i += 1) {
+          setProgress("analysis", phases[i][0], phases[i][1]);
+          appendLog(phases[i][1]);
+          await sleep(i === phases.length - 1 ? 250 : 420);
+        }
+
+        renderAnalysisResults();
+        state.previewReady = !state.hasBlockingError;
+        state.busy = false;
+        previewButton.disabled = false;
+        setStatus("outlookStatus", "분석 완료", "ready");
+        setStatus(
+          "previewStatus",
+          state.hasBlockingError ? "오류 1건" : "검증 완료",
+          state.hasBlockingError ? "error" : "ready"
+        );
+        if (state.hasBlockingError) {
+          updateRail(3, 2);
+          appendLog("수량 판정 오류가 발견되었습니다. 미리보기에서 내용을 확인해 주세요.", "오류");
+        } else {
+          updateRail(3, 3);
+          appendLog("미리보기 검증 완료", "성공");
+        }
+      }
+
+      function setProgress(prefix, percent, label) {
+        byId(prefix + "ProgressLabel").textContent = label;
+        byId(prefix + "ProgressValue").textContent = percent + "%";
+        byId(prefix + "ProgressBar").style.width = percent + "%";
+        byId(prefix + "ProgressTrack").setAttribute("aria-valuenow", String(percent));
+      }
+
+      function dataForMkr(mkr, index, scenario) {
+        var fixed = {
+          "MKR56/26": [180, 23, "2026-09-16", "2026-09-19", "2026-09-17"],
+          "MKR56/26-1": [42, 8, "2026-09-17", "2026-09-21", "2026-09-18"],
+          "MKR56/26-2": [28, 4, "2026-09-18", "2026-09-22", "2026-09-19"],
+          "MKR57/26": [136, 11, "2026-09-19", "2026-09-24", "2026-09-20"],
+          "MKR58/26": [98, 7, "2026-09-20", "2026-09-25", "2026-09-21"],
+          "MKR58/26-1": [31, 5, "2026-09-21", "2026-09-26", "2026-09-22"],
+          "MKR59/26": [114, 9, "2026-09-22", "2026-09-28", "2026-09-23"],
+          "MKR59/26-1": [22, 3, "2026-09-23", "2026-09-29", "2026-09-24"]
+        };
+        var values = fixed[mkr] || [55 + index * 7, 2 + index, "2026-09-20", "2026-09-25", "2026-09-22"];
+        var status = "ok";
+        if (scenario === "warning" && index === state.mkrs.length - 1) status = "warn";
+        if (scenario === "error" && index === 0) status = "bad";
+        return {
+          mkr: mkr,
+          sheet: sheetNameFor(mkr),
+          orders: values[0],
+          backorders: values[1],
+          shipDate: values[2],
+          eta: values[3],
+          etd: values[4],
+          status: status
+        };
+      }
+
+      function statusMarkup(status) {
+        if (status === "warn") return '<span class="status-pill warn">● 경고</span>';
+        if (status === "bad") return '<span class="status-pill bad">● 오류</span>';
+        return '<span class="status-pill ok">● 정상</span>';
+      }
+
+      function renderAnalysisResults() {
+        var scenario = byId("mockScenario").value;
+        var rows = state.mkrs.map(function (mkr, index) {
+          return dataForMkr(mkr, index, scenario);
+        });
+
+        state.hasBlockingError = scenario === "error";
+        state.selectedMkr = rows.length ? rows[0].mkr : "";
+        byId("summaryMkrCount").innerHTML = state.mkrs.length + '<span class="metric-unit">개</span>';
+
+        var issueArea = byId("issueArea");
+        if (scenario === "warning") {
+          issueArea.innerHTML =
+            '<div class="alert warning"><span class="alert-icon" aria-hidden="true">!</span>' +
+            "<span><strong>경고 1건:</strong> " + escapeHtml(rows[rows.length - 1].mkr) +
+            "의 일반 Sales Note를 찾지 못해 출하량=주문량 fallback을 적용했습니다.</span></div>";
+        } else if (scenario === "error") {
+          issueArea.innerHTML =
+            '<div class="alert error" role="alert"><span class="alert-icon" aria-hidden="true">×</span>' +
+            "<span><strong>오류 1건:</strong> " + escapeHtml(rows[0].mkr) +
+            " 품번 760916의 R·S·P·K·L 관계가 어떤 수량 규칙에도 일치하지 않습니다. 결과 확인이 차단됩니다.</span></div>";
+        } else {
+          issueArea.innerHTML =
+            '<div class="alert success"><span class="alert-icon" aria-hidden="true">✓</span>' +
+            "<span>모든 MKR과 품목의 수량 및 일정 검증을 통과했습니다.</span></div>";
+        }
+
+        byId("resultTableBody").innerHTML = rows.map(function (row, index) {
+          return '<tr class="result-row' + (index === 0 ? " selected" : "") +
+            '" data-mkr="' + escapeHtml(row.mkr) + '" tabindex="0">' +
+            "<td><strong>" + escapeHtml(row.mkr) + "</strong></td>" +
+            "<td>" + escapeHtml(row.sheet) + "</td>" +
+            '<td class="number">' + row.orders + "</td>" +
+            '<td class="number">' + row.backorders + "</td>" +
+            "<td>" + row.shipDate + "</td>" +
+            "<td>" + row.eta + "</td>" +
+            "<td>" + row.etd + "</td>" +
+            "<td>" + statusMarkup(row.status) + "</td>" +
+            "</tr>";
+        }).join("");
+
+        document.querySelectorAll(".result-row").forEach(function (row) {
+          row.addEventListener("click", function () {
+            selectResultRow(row.getAttribute("data-mkr"));
+          });
+          row.addEventListener("keydown", function (event) {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              selectResultRow(row.getAttribute("data-mkr"));
+            }
+          });
+        });
+
+        renderDetailTable(state.selectedMkr, scenario);
+        byId("analysisResults").classList.remove("hidden");
+      }
+
+      function selectResultRow(mkr) {
+        state.selectedMkr = mkr;
+        document.querySelectorAll(".result-row").forEach(function (row) {
+          row.classList.toggle("selected", row.getAttribute("data-mkr") === mkr);
+        });
+        renderDetailTable(mkr, byId("mockScenario").value);
+      }
+
+      function detailRowsFor(mkr, scenario) {
+        var error = scenario === "error" && mkr === state.mkrs[0];
+        return [
+          ["417133", "87336", "28800", "28800", "58536", "0", "28800", "28800", "0", "R3_RAW_INCLUDES_K"],
+          ["760351", "60", "60", "60", "1320", "60", "0", "0", "0", "R1_BACKORDER_ONLY"],
+          ["760526", "180", "120", "600", "480", "420", "180", "120", "60", "R4_SALES_INCLUDES_L"],
+          error
+            ? ["760916", "120", "90", "75", "100", "40", "—", "—", "—", "판정 오류"]
+            : ["760383", "2040", "2040", "—", "240", "240", "1800", "1800", "0", "R7_MISSING_SALES"]
+        ];
+      }
+
+      function renderDetailTable(mkr, scenario) {
+        var rows = detailRowsFor(mkr, scenario);
+        byId("detailHeading").textContent = (mkr || "MKR") + " 품목별 수량 판정";
+        byId("detailRuleCount").textContent = String(rows.length);
+        byId("detailTableBody").innerHTML = rows.map(function (row) {
+          return "<tr>" + row.map(function (value, index) {
+            var cellClass = index > 0 && index < 9 ? ' class="number"' : "";
+            return "<td" + cellClass + ">" + escapeHtml(value) + "</td>";
+          }).join("") + "</tr>";
+        }).join("");
+      }
+
+      function resetAll() {
+        if (state.busy) return;
+        state.fileName = "";
+        state.mkrs = [];
+        state.sheetsReady = false;
+        state.previewReady = false;
+        state.hasBlockingError = false;
+        state.selectedMkr = "";
+        excelFile.value = "";
+        fileName.textContent = "선택된 파일 없음";
+        mkrInput.value = "";
+        byId("senders").value = "hnagasawa@milbon.com\nshipping@sample.co.jp";
+        byId("startDate").value = "2026-08-01";
+        byId("outlookFolder").selectedIndex = 0;
+        byId("maxMessages").value = "500";
+        byId("mockScenario").value = "warning";
+        mkrPreview.innerHTML =
+          '<div class="empty-state">설명문을 입력하면 MKR 번호와 생성될 시트명이 여기에 표시됩니다.</div>';
+        mkrCount.textContent = "0";
+        sheetResult.classList.add("hidden");
+        setProgress("analysis", 0, "분석 준비");
+        byId("analysisResults").classList.add("hidden");
+        logLines.textContent = "[대기] MKR SYNC 전체 기능 목업이 초기화되었습니다.";
+        disableAfterInputChange();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      excelFile.addEventListener("change", function () {
+        var file = excelFile.files && excelFile.files[0];
+        state.fileName = file ? file.name : "";
+        fileName.textContent = state.fileName || "선택된 파일 없음";
+        fileName.style.color = state.fileName ? "var(--navy-2)" : "var(--muted)";
+        state.sheetsReady = false;
+        disableAfterInputChange();
+        if (state.fileName) appendLog("Excel 파일 선택: " + state.fileName);
+      });
+
+      mkrInput.addEventListener("input", renderMkrPreview);
+
+      byId("loadExampleButton").addEventListener("click", function () {
+        mkrInput.value = exampleText;
+        renderMkrPreview();
+        appendLog("MKR 설명문 예시를 불러왔습니다.");
+      });
+
+      createSheetsButton.addEventListener("click", function () {
+        if (!validateSheetInputs()) return;
+        simulateSheetCreation();
+      });
+
+      previewButton.addEventListener("click", runPreview);
+      byId("resetButton").addEventListener("click", resetAll);
+    }());
+  </script>
+</body>
+</html>
