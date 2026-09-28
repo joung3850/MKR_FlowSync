@@ -15,6 +15,11 @@ class OrderItem:
     code: str
     name: str
     quantity: Decimal
+    # True when rows explicitly labelled as historical backorders were
+    # removed while reading the order workbook.  In that case ``quantity``
+    # is already the current MKR order and must not be reduced again by the
+    # separate backorder ledger.
+    backorders_separated: bool = False
 
 
 @dataclass(frozen=True)

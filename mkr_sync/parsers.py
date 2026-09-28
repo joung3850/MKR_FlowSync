@@ -180,14 +180,29 @@ def _is_suspicious_fallback_name(value: object) -> bool:
     )
 
 
-def _add_order_item(items: dict[str, OrderItem], code: str, name: str, quantity: Decimal) -> None:
+ORDER_ROW_BACKORDER_MARKER = re.compile(r"(?i)バック\s*オーダー|Back\s*[- ]?\s*Order")
+
+
+def _add_order_item(
+    items: dict[str, OrderItem],
+    code: str,
+    name: str,
+    quantity: Decimal,
+    *,
+    backorders_separated: bool = False,
+) -> None:
     if quantity < ZERO or not code or not name:
         return
     existing = items.get(code)
     if existing:
-        items[code] = OrderItem(code, existing.name or name, existing.quantity + quantity)
+        items[code] = OrderItem(
+            code,
+            existing.name or name,
+            existing.quantity + quantity,
+            existing.backorders_separated or backorders_separated,
+        )
     else:
-        items[code] = OrderItem(code, name, quantity)
+        items[code] = OrderItem(code, name, quantity, backorders_separated)
 
 
 def parse_order_matrix(matrix: Sequence[Sequence[object]]) -> tuple[dict[str, OrderItem], bool]:
@@ -211,6 +226,7 @@ def parse_order_matrix(matrix: Sequence[Sequence[object]]) -> tuple[dict[str, Or
     if header:
         header_row, code_col, name_col, qty_col = header
         blank_run = 0
+        filtered_backorder_rows = False
         for row in rows[header_row + 1 :]:
             code = get_code(row[code_col] if code_col < len(row) else None)
             if not code:
@@ -219,10 +235,26 @@ def parse_order_matrix(matrix: Sequence[Sequence[object]]) -> tuple[dict[str, Or
                     break
                 continue
             blank_run = 0
+            # The Milbon order workbook appends historical backorders to the
+            # current MKR order and identifies them in the remarks column
+            # (for example: "MKR20/26-1のバックオーダー").  These rows belong
+            # in the separate backorder table and must never be summed into
+            # the current MKR Order QTY.
+            if ORDER_ROW_BACKORDER_MARKER.search(" ".join(clean_text(value) for value in row)):
+                filtered_backorder_rows = True
+                continue
             name = clean_text(row[name_col] if name_col < len(row) else None)
             qty = parse_decimal(row[qty_col] if qty_col < len(row) else None)
             if name and qty is not None:
                 _add_order_item(items, code, name, qty)
+        if filtered_backorder_rows:
+            items = OrderedDict(
+                (
+                    code,
+                    OrderItem(code, item.name, item.quantity, True),
+                )
+                for code, item in items.items()
+            )
         return items, False
 
     for row in rows:
@@ -376,6 +408,38 @@ def parse_backorders(text: str, current_mkr: str, received_at: datetime, source:
     return aggregated
 
 
+def _add_sales_evidence(
+    result: dict[str, SalesNoteEvidence],
+    code: str,
+    name: str,
+    order_qty: Decimal | None,
+    shipped_qty: Decimal | None,
+) -> None:
+    """Aggregate every physical Sales Note row for one product code.
+
+    A code can appear once for the current MKR and again for one or more
+    historical backorders.  Keeping only the first row loses the evidence
+    needed to allocate those quantities correctly, so preserve their totals.
+    """
+    current = result.get(code)
+    if current is None:
+        result[code] = SalesNoteEvidence(code, name, order_qty, shipped_qty)
+        return
+
+    combined_order = current.order_qty
+    if order_qty is not None:
+        combined_order = (combined_order or ZERO) + order_qty
+    combined_shipped = current.shipped_qty
+    if shipped_qty is not None:
+        combined_shipped = (combined_shipped or ZERO) + shipped_qty
+    result[code] = SalesNoteEvidence(
+        code,
+        current.name or name,
+        combined_order,
+        combined_shipped,
+    )
+
+
 def parse_sales_note(text: str) -> dict[str, SalesNoteEvidence]:
     text = text_before_backorders(text)
     lines = split_control_lines(text)
@@ -400,10 +464,16 @@ def parse_sales_note(text: str) -> dict[str, SalesNoteEvidence]:
             continue
         order_qty = numbers[0] if len(numbers) >= 2 else None
         shipped_qty = numbers[1] if len(numbers) >= 2 else numbers[0]
-        result[code] = SalesNoteEvidence(code, " ".join(name_tokens), order_qty, shipped_qty)
+        _add_sales_evidence(
+            result,
+            code,
+            " ".join(name_tokens),
+            order_qty,
+            shipped_qty,
+        )
 
     for index, line in enumerate(lines):
-        if not re.fullmatch(r"\d{6}", line) or line in result:
+        if not re.fullmatch(r"\d{6}", line):
             continue
         name = ""
         numbers: list[Decimal] = []
@@ -412,6 +482,22 @@ def parse_sales_note(text: str) -> dict[str, SalesNoteEvidence]:
                 break
             if _is_code_header(value) or _is_name_header(value) or _is_qty_header(value):
                 continue
+            # ActiveReports Sales Notes place the code on one line and the
+            # description plus shipped quantity on the next line, followed
+            # by unit price and amount.  Read only the number immediately
+            # before PCS/PCE/EA; currency amounts are not quantities.
+            quantity_match = re.search(
+                rf"(?i)(?P<qty>{NUMBER_PATTERN})\s*(?:PCE|PCS|EA)\b",
+                value,
+            )
+            if quantity_match:
+                description = value[: quantity_match.start()].strip()
+                shipped_qty = parse_decimal(quantity_match.group("qty"))
+                if description and shipped_qty is not None:
+                    _add_sales_evidence(
+                        result, line, description, None, shipped_qty
+                    )
+                break
             number = parse_decimal(value)
             if not name and number is None and not _is_non_item(value):
                 name = value
@@ -420,7 +506,7 @@ def parse_sales_note(text: str) -> dict[str, SalesNoteEvidence]:
         if name and numbers:
             order_qty = numbers[0] if len(numbers) >= 2 else None
             shipped_qty = numbers[1] if len(numbers) >= 2 else numbers[0]
-            result[line] = SalesNoteEvidence(line, name, order_qty, shipped_qty)
+            _add_sales_evidence(result, line, name, order_qty, shipped_qty)
     return result
 
 

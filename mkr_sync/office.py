@@ -220,7 +220,12 @@ class ExcelOrderReader:
                 for code, item in parsed.items():
                     previous = combined.get(code)
                     combined[code] = (
-                        OrderItem(code, previous.name or item.name, previous.quantity + item.quantity)
+                        OrderItem(
+                            code,
+                            previous.name or item.name,
+                            previous.quantity + item.quantity,
+                            previous.backorders_separated or item.backorders_separated,
+                        )
                         if previous
                         else item
                     )

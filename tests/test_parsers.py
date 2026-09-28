@@ -65,6 +65,31 @@ class ParserTests(unittest.TestCase):
         self.assertFalse(fallback)
         self.assertEqual(parsed["417133"].quantity, D("28800"))
 
+    def test_order_matrix_excludes_explicit_historical_backorder_rows(self):
+        matrix = [
+            ["商品コード", "商品名", "数量", "備考"],
+            ["331383", "ORDEVE 13-srMV", "1800", ""],
+            ["331383", "ORDEVE 13-srMV", "600", "MKR16/26のバックオーダー"],
+            ["331383", "ORDEVE 13-srMV", "1200", "MKR20/26-1のバックオーダー"],
+        ]
+        parsed, fallback = parse_order_matrix(matrix)
+        self.assertFalse(fallback)
+        self.assertEqual(parsed["331383"].quantity, D("1800"))
+        self.assertTrue(parsed["331383"].backorders_separated)
+
+    def test_active_reports_sales_note_aggregates_duplicate_code_rows(self):
+        text = (
+            "331383\n"
+            "ORDEVE 13-srMV, 80g 1,080 PCS KRW2,424.00 KRW2,617,920.00\n"
+            "330883\n"
+            "ORDEVE 8-srMV, 80g 180 PCS KRW2,424.00 KRW436,320.00\n"
+            "331383\n"
+            "ORDEVE 13-srMV, 80g 600 PCS KRW2,424.00 KRW1,454,400.00"
+        )
+        parsed = parse_sales_note(text)
+        self.assertIsNone(parsed["331383"].order_qty)
+        self.assertEqual(parsed["331383"].shipped_qty, D("1680"))
+
     def test_order_matrix_fallback(self):
         parsed, fallback = parse_order_matrix([["760526", "Product", "180"]])
         self.assertTrue(fallback)

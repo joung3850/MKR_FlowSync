@@ -1,8 +1,10 @@
+from datetime import datetime
 from decimal import Decimal as D
 import unittest
 
 from mkr_sync.errors import QuantityRuleError
-from mkr_sync.rules import decide_quantity
+from mkr_sync.models import BackorderSnapshot, OrderItem, SalesNoteEvidence
+from mkr_sync.rules import build_decisions, decide_quantity
 
 
 class QuantityRuleTests(unittest.TestCase):
@@ -146,6 +148,99 @@ class QuantityRuleTests(unittest.TestCase):
         )
         self.assertEqual(result.rule_id, "R8_MISSING_SALES_INCLUDES_L")
         self.assertEqual((result.order_qty, result.shipped_qty), (D("300"), D("300")))
+
+    def test_separated_current_order_uses_actual_sales_note_without_backorder_deduction(self):
+        decisions = build_decisions(
+            "MKR49/26",
+            {"331383": OrderItem("331383", "ORDEVE 13-srMV", D("1800"), True)},
+            {
+                "331383": SalesNoteEvidence(
+                    "331383", "ORDEVE 13-srMV", None, D("2160")
+                )
+            },
+            [
+                BackorderSnapshot(
+                    "MKR49/26",
+                    "MKR20/26-1",
+                    "331383",
+                    "ORDEVE 13-srMV",
+                    D("1200"),
+                    D("1080"),
+                    datetime(2026, 9, 1),
+                    "fixture",
+                )
+            ],
+        )
+        result = decisions[0]
+        self.assertEqual(result.rule_id, "R10_CURRENT_ORDER_SALES_NOTE")
+        self.assertEqual(
+            (result.order_qty, result.shipped_qty, result.shortage_qty),
+            (D("1800"), D("1080"), D("720")),
+        )
+
+    def test_mkr49_1_duplicate_code_sales_are_allocated_to_backorders_first(self):
+        decisions = build_decisions(
+            "MKR49/26-1",
+            {"417133": OrderItem("417133", "NIGELLE HOLDFIT VEIL", D("28800"), True)},
+            {
+                "417133": SalesNoteEvidence(
+                    "417133", "NIGELLE HOLDFIT VEIL", D("28800"), D("50040")
+                )
+            },
+            [
+                BackorderSnapshot(
+                    "MKR49/26-1", "MKR20/26-2", "417133", "NIGELLE HOLDFIT VEIL",
+                    D("29736"), D("29736"), datetime(2026, 9, 8), "fixture",
+                ),
+                BackorderSnapshot(
+                    "MKR49/26-1", "MKR39/26-1", "417133", "NIGELLE HOLDFIT VEIL",
+                    D("28800"), D("20304"), datetime(2026, 9, 8), "fixture",
+                ),
+            ],
+        )
+        result = decisions[0]
+        self.assertEqual(
+            (result.order_qty, result.shipped_qty, result.shortage_qty),
+            (D("28800"), D("0"), D("28800")),
+        )
+
+    def test_nonseparated_duplicate_sales_total_can_resolve_backorder_only(self):
+        result = self.decide(
+            code="760475",
+            raw_order_qty=D("1020"),
+            first_shipped_qty=D("1020"),
+            sales_note_order_qty=None,
+            backorder_order_qty=D("1020"),
+            backorder_shipped_qty=D("1020"),
+        )
+        self.assertEqual(result.rule_id, "R1_BACKORDER_ONLY")
+        self.assertEqual((result.order_qty, result.shipped_qty), (D("0"), D("0")))
+
+    def test_separated_current_order_requires_sales_note_shipped_value(self):
+        with self.assertRaises(QuantityRuleError):
+            self.decide(
+                sales_note_order_qty=None,
+                shipped_fallback=True,
+                backorders_separated=True,
+            )
+
+    def test_item_omitted_from_valid_sales_note_is_zero_shipped(self):
+        decisions = build_decisions(
+            "MKR49/26",
+            {
+                "302509": OrderItem("302509", "Missing item", D("3600"), True),
+                "331383": OrderItem("331383", "Present item", D("1800"), True),
+            },
+            {
+                "331383": SalesNoteEvidence(
+                    "331383", "Present item", None, D("1080")
+                )
+            },
+            [],
+        )
+        by_code = {item.code: item for item in decisions}
+        self.assertEqual(by_code["302509"].shipped_qty, D("0"))
+        self.assertFalse(by_code["302509"].shipped_fallback)
 
 
 if __name__ == "__main__":

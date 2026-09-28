@@ -24,6 +24,7 @@ def decide_quantity(
     backorder_order_qty: Decimal = ZERO,
     backorder_shipped_qty: Decimal = ZERO,
     shipped_fallback: bool = False,
+    backorders_separated: bool = False,
 ) -> QuantityDecision:
     """Apply the six business rules in their required precedence order."""
     context = RuleContext(
@@ -52,7 +53,24 @@ def decide_quantity(
     shipped_adjusted = False
     shipped_qty: Decimal | None = None
 
-    if (
+    if backorders_separated:
+        if shipped_fallback:
+            bad = RuleContext(
+                **{**context.__dict__, "attempted_rule": "R10_CURRENT_ORDER_SALES_NOTE"}
+            )
+            raise QuantityRuleError(
+                "현재 MKR 품목의 실제 Shipped QTY를 Sales Note에서 찾지 못했습니다.",
+                bad,
+            )
+        rule_id = "R10_CURRENT_ORDER_SALES_NOTE"
+        order_qty = raw_order_qty
+        shipped_qty = first_shipped_qty
+        if shipped_qty > order_qty:
+            bad = RuleContext(**{**context.__dict__, "attempted_rule": rule_id})
+            raise QuantityRuleError(
+                "Sales Note의 Shipped QTY가 현재 MKR Order QTY보다 큽니다.", bad
+            )
+    elif (
         backorder_shipped_qty > ZERO
         and raw_order_qty == backorder_shipped_qty
         and first_shipped_qty == backorder_shipped_qty
@@ -176,10 +194,50 @@ def build_decisions(
     for code in sorted(order_items):
         item = order_items[code]
         evidence = sales_evidence.get(code)
-        shipped_fallback = evidence is None or evidence.shipped_qty is None
-        first_shipped = item.quantity if shipped_fallback else evidence.shipped_qty
-        sales_order = None if evidence is None else evidence.order_qty
         k_qty, l_qty = totals[code]
+        # Once the Sales Note itself was parsed successfully, a current-order
+        # item omitted from it has an actual shipped quantity of zero.  Only
+        # fall back when no usable Sales Note exists at all (or its row has no
+        # quantity), never merely because a particular code is absent.
+        omitted_from_parsed_sales_note = (
+            item.backorders_separated and bool(sales_evidence) and evidence is None
+        )
+        shipped_fallback = (
+            not omitted_from_parsed_sales_note
+            and (evidence is None or evidence.shipped_qty is None)
+        )
+        if omitted_from_parsed_sales_note:
+            first_shipped = ZERO
+        else:
+            first_shipped = item.quantity if shipped_fallback else evidence.shipped_qty
+        if (
+            item.backorders_separated
+            and not shipped_fallback
+            and evidence is not None
+            and evidence.shipped_qty is not None
+        ):
+            # The Sales Note lists both current-MKR shipments and historical
+            # backorder shipments.  Allocate the independently identified
+            # backorder shipped total first; only the remainder belongs to
+            # the current order.  This also handles a current item omitted
+            # from the Sales Note while the same code appears as backorder.
+            if evidence.shipped_qty < l_qty:
+                bad = RuleContext(
+                    mkr=mkr,
+                    code=code,
+                    raw_order_qty=item.quantity,
+                    first_shipped_qty=evidence.shipped_qty,
+                    sales_note_order_qty=evidence.order_qty,
+                    backorder_order_qty=k_qty,
+                    backorder_shipped_qty=l_qty,
+                    attempted_rule="SALES_TOTAL_MINUS_BACKORDER_L",
+                )
+                raise QuantityRuleError(
+                    "Sales Note 출하 합계가 확인된 백오더 출하 합계보다 작습니다.",
+                    bad,
+                )
+            first_shipped = evidence.shipped_qty - l_qty
+        sales_order = None if evidence is None else evidence.order_qty
         decisions.append(
             decide_quantity(
                 mkr=mkr,
@@ -191,6 +249,7 @@ def build_decisions(
                 backorder_order_qty=k_qty,
                 backorder_shipped_qty=l_qty,
                 shipped_fallback=shipped_fallback,
+                backorders_separated=item.backorders_separated,
             )
         )
     return decisions
