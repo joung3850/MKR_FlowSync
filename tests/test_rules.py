@@ -242,6 +242,34 @@ class QuantityRuleTests(unittest.TestCase):
         self.assertEqual(by_code["302509"].shipped_qty, D("0"))
         self.assertFalse(by_code["302509"].shipped_fallback)
 
+    def test_missing_sales_note_keeps_shipment_and_shortage_unknown(self):
+        decisions = build_decisions(
+            "MKR55/26",
+            {"162365": OrderItem("162365", "Added item", D("72"), origin="Japan")},
+            {},
+            [],
+            sales_note_available=False,
+        )
+        result = decisions[0]
+        self.assertEqual(result.order_qty, D("72"))
+        self.assertIsNone(result.shipped_qty)
+        self.assertIsNone(result.shortage_qty)
+        self.assertEqual(result.record_status, "PENDING_SALES_NOTE")
+
+    def test_sales_note_only_item_is_kept_after_backorder_allocation(self):
+        decisions = build_decisions(
+            "MKR55/26",
+            {},
+            {"162365": SalesNoteEvidence("162365", "Added item", D("72"), D("72"))},
+            [],
+            sales_note_available=True,
+            sales_note_source="latest.pdf",
+        )
+        result = decisions[0]
+        self.assertEqual(result.rule_id, "R12_SALES_NOTE_ONLY")
+        self.assertEqual((result.order_qty, result.shipped_qty), (D("72"), D("72")))
+        self.assertEqual(result.record_status, "SALES_NOTE_ONLY")
+
 
 if __name__ == "__main__":
     unittest.main()

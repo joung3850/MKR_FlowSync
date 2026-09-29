@@ -1,28 +1,35 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from .config import AppConfig
 from .errors import DataValidationError, MkrSyncError, OfficeAutomationError
-from .models import BackorderSnapshot, CollectedMail, MkrResult
+from .models import AttachmentEvent, BackorderSnapshot, CollectedMail, MkrResult, OrderItem
 from .office import ExcelOrderReader, PdfTextReader
-from .parsers import (
-    merge_sales_evidence,
-    parse_backorders,
-    parse_date_near_keywords,
-    parse_sales_note,
-)
+from .parsers import merge_sales_evidence, parse_backorders, parse_date_near_keywords, parse_sales_note
 from .rules import build_decisions
 
+
+@dataclass(frozen=True)
+class OrderState:
+    items: dict[str, OrderItem]
+    first_event: AttachmentEvent
+    latest_event: AttachmentEvent
+    warnings: tuple[str, ...] = ()
+
+
 def original_order_candidates(events):
-    originals = sorted(
-        (event for event in events if event.kind == "order" and not event.is_revision),
-        key=lambda item: (item.received_at, item.original_name),
+    """Return every unique order version, including revisions and additions."""
+    ordered = sorted(
+        (event for event in events if event.kind == "order"),
+        key=lambda item: (item.received_at, item.entry_id, item.original_name.casefold()),
     )
     seen_hashes: set[str] = set()
     selected = []
-    for event in originals:
+    for event in ordered:
         if event.sha256 in seen_hashes:
             continue
         seen_hashes.add(event.sha256)
@@ -31,19 +38,177 @@ def original_order_candidates(events):
 
 
 def select_first_successful_order(parsed_events):
-    """Match V11.8: earliest parseable order, then the most complete file."""
+    """Legacy helper retained for callers; reconstruction no longer stops here."""
     if not parsed_events:
         return None
     first_received = min(event.received_at for event, _items in parsed_events)
     same_message_time = [
-        (event, items)
-        for event, items in parsed_events
-        if event.received_at == first_received
+        (event, items) for event, items in parsed_events if event.received_at == first_received
     ]
     return sorted(
         same_message_time,
         key=lambda pair: (-len(pair[1]), pair[0].original_name.casefold()),
     )[0]
+
+
+def _origin_from_name(name: str) -> str:
+    normalized = name.upper()
+    if "THB" in normalized or re.search(r"(?:^|[\s_\-([])B(?:[\s_\-.)\]]|$)", normalized):
+        return "Thailand"
+    if "KRW" in normalized or re.search(r"(?:^|[\s_\-([])A(?:[\s_\-.)\]]|$)", normalized):
+        return "Japan"
+    return "Unknown"
+
+
+def _combine_origin(left: str, right: str) -> str:
+    known = {value for value in (left, right) if value and value != "Unknown"}
+    if len(known) > 1:
+        return "Mixed"
+    return next(iter(known), "Unknown")
+
+
+def _combine_source(left: str, right: str) -> str:
+    parts = []
+    for value in (left, right):
+        for part in filter(None, (item.strip() for item in value.split(" + "))):
+            if part not in parts:
+                parts.append(part)
+    return " + ".join(parts)
+
+
+def merge_order_group(
+    parsed_events: list[tuple[AttachmentEvent, dict[str, OrderItem]]],
+) -> dict[str, OrderItem]:
+    """Merge country/part files from one mail into one unambiguous snapshot."""
+    combined: dict[str, OrderItem] = {}
+    for event, parsed in parsed_events:
+        origin = _origin_from_name(event.original_name)
+        for code, raw_item in parsed.items():
+            item = replace(raw_item, origin=origin, source=event.original_name)
+            previous = combined.get(code)
+            if previous is None:
+                combined[code] = item
+                continue
+            if (
+                previous.origin != item.origin
+                and previous.origin != "Unknown"
+                and item.origin != "Unknown"
+            ):
+                combined[code] = replace(
+                    previous,
+                    name=previous.name or item.name,
+                    quantity=previous.quantity + item.quantity,
+                    backorders_separated=(
+                        previous.backorders_separated or item.backorders_separated
+                    ),
+                    origin="Mixed",
+                    source=_combine_source(previous.source, item.source),
+                )
+                continue
+            if previous.quantity != item.quantity:
+                raise DataValidationError(
+                    f"같은 메일의 주문 첨부에서 {code} 수량이 충돌합니다: "
+                    f"{previous.quantity} / {item.quantity}"
+                )
+            combined[code] = replace(
+                previous,
+                name=previous.name or item.name,
+                backorders_separated=previous.backorders_separated or item.backorders_separated,
+                origin=_combine_origin(previous.origin, item.origin),
+                source=_combine_source(previous.source, item.source),
+            )
+    return combined
+
+
+def _event_role(events: list[AttachmentEvent]) -> str:
+    text = " ".join(f"{event.subject} {event.original_name}" for event in events)
+    if re.search(r"追加|\badditional\b|\badd(?:ition)?\b", text, re.IGNORECASE):
+        return "addition"
+    if any(event.is_revision for event in events) or re.search(
+        r"\brev(?:ision)?\s*\d*\b|改訂|修正|수정|변경", text, re.IGNORECASE
+    ):
+        return "revision"
+    return "ordinary"
+
+
+def _same_quantities(left: dict[str, OrderItem], right: dict[str, OrderItem]) -> bool:
+    return all(code in left and left[code].quantity == item.quantity for code, item in right.items())
+
+
+def apply_order_version(
+    current: dict[str, OrderItem], incoming: dict[str, OrderItem], role: str
+) -> tuple[dict[str, OrderItem], str | None]:
+    """Apply one chronological order event without inventing ambiguous cancellations."""
+    if not current:
+        return dict(incoming), None
+    current_codes, incoming_codes = set(current), set(incoming)
+    if role == "revision":
+        return dict(incoming), None
+    if role == "addition":
+        if current_codes <= incoming_codes:
+            return dict(incoming), None
+        if current_codes.isdisjoint(incoming_codes):
+            return {**current, **incoming}, None
+        raise DataValidationError(
+            "추가 주문 파일이 기존 일부 품목만 포함하여 누적본인지 증분본인지 판단할 수 없습니다."
+        )
+    if current_codes <= incoming_codes:
+        return dict(incoming), None
+    if current_codes.isdisjoint(incoming_codes):
+        return {**current, **incoming}, None
+    if incoming_codes < current_codes and _same_quantities(current, incoming):
+        return dict(current), "기존 주문의 일부만 반복된 첨부는 물류용 사본으로 보고 제외했습니다."
+    if current_codes == incoming_codes and _same_quantities(current, incoming):
+        return dict(incoming), None
+    raise DataValidationError(
+        "일반 주문 파일이 기존 상태와 부분적으로 충돌하여 자동 병합하지 않았습니다."
+    )
+
+
+def reconstruct_order_state(events, order_reader, mkr: str, logger) -> OrderState:
+    candidates = original_order_candidates(events)
+    if not candidates:
+        raise DataValidationError(f"{mkr}의 주문 첨부를 찾지 못했습니다.")
+    grouped: dict[str, list[AttachmentEvent]] = defaultdict(list)
+    for event in candidates:
+        key = event.entry_id or f"{event.received_at.isoformat()}::{event.original_name}"
+        grouped[key].append(event)
+    ordered_groups = sorted(
+        grouped.values(),
+        key=lambda group: (min(item.received_at for item in group), min(item.original_name for item in group)),
+    )
+    state: dict[str, OrderItem] = {}
+    first_event = latest_event = None
+    warnings: list[str] = []
+    for group in ordered_groups:
+        parsed_group: list[tuple[AttachmentEvent, dict[str, OrderItem]]] = []
+        for event in sorted(group, key=lambda item: item.original_name.casefold()):
+            try:
+                parsed = order_reader.read(event.path, mkr)
+            except MkrSyncError as exc:
+                message = f"주문 첨부 분석 제외: {event.original_name} ({exc})"
+                logger.warning("[%s] %s", mkr, message)
+                warnings.append(message)
+                continue
+            if parsed:
+                parsed_group.append((event, parsed))
+                logger.info("[%s] 주문 버전 분석: %s / %d개", mkr, event.original_name, len(parsed))
+        if not parsed_group:
+            continue
+        incoming = merge_order_group(parsed_group)
+        role = _event_role([event for event, _items in parsed_group])
+        state, warning = apply_order_version(state, incoming, role)
+        applied_event = max((event for event, _items in parsed_group), key=lambda item: item.received_at)
+        first_event = first_event or min(
+            (event for event, _items in parsed_group), key=lambda item: item.received_at
+        )
+        latest_event = applied_event
+        if warning:
+            warnings.append(f"{applied_event.original_name}: {warning}")
+        logger.info("[%s] 주문 상태 반영: %s / %s / %d개", mkr, applied_event.original_name, role, len(state))
+    if not state or first_event is None or latest_event is None:
+        raise DataValidationError(f"{mkr} 주문 첨부에서 품목을 읽지 못했습니다.")
+    return OrderState(state, first_event, latest_event, tuple(warnings))
 
 
 def merge_latest_backorders(
@@ -59,8 +224,42 @@ def merge_latest_backorders(
 def validate_capacity(mkr: str, new_orders: int, backorders: int, maximum: int) -> None:
     if new_orders > maximum or backorders > maximum:
         raise DataValidationError(
-            f"{mkr}의 출력 행이 {maximum}개를 초과했습니다: A:E={new_orders} / H:M={backorders}"
+            f"{mkr}의 출력 행이 {maximum}개를 초과했습니다: A:G={new_orders} / H:N={backorders}"
         )
+
+
+def _latest_sales_state(events, records, read_pdf, mkr: str, logger):
+    sales_events = sorted(
+        (event for event in events if event.kind == "sales_note"),
+        key=lambda item: (item.received_at, item.entry_id, item.original_name.casefold()),
+    )
+    record_by_entry = {record.entry_id: record for record in records}
+    grouped: dict[str, list[AttachmentEvent]] = defaultdict(list)
+    for event in sales_events:
+        key = event.entry_id or f"{event.received_at.isoformat()}::{event.original_name}"
+        grouped[key].append(event)
+    selected = {}
+    selected_event = None
+    warnings: list[str] = []
+    for group in sorted(grouped.values(), key=lambda value: min(item.received_at for item in value)):
+        group_evidence = {}
+        seen_hashes: set[str] = set()
+        for event in group:
+            if event.sha256 in seen_hashes:
+                continue
+            seen_hashes.add(event.sha256)
+            group_evidence = merge_sales_evidence(group_evidence, parse_sales_note(read_pdf(event.path)))
+        record = record_by_entry.get(group[0].entry_id)
+        body = record.body if record is not None else group[0].body
+        group_evidence = merge_sales_evidence(group_evidence, parse_sales_note(body))
+        latest = max(group, key=lambda item: item.received_at)
+        if group_evidence:
+            selected = group_evidence
+            selected_event = latest
+            logger.info("[%s] SALES NOTE 상태 반영: %s / %d개", mkr, latest.original_name, len(selected))
+        else:
+            warnings.append(f"SALES NOTE 분석 제외: {latest.original_name} (품목을 찾지 못함)")
+    return selected, selected_event, warnings
 
 
 def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[MkrResult]:
@@ -68,7 +267,6 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
     pdf_reader = PdfTextReader()
     pdf_cache: dict[Path, str] = {}
     results: list[MkrResult] = []
-
     records_by_target = defaultdict(list)
     attachments_by_target = defaultdict(list)
     for record in collected.records:
@@ -87,93 +285,21 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
 
     for mkr, sheet_name in config.targets.items():
         records = sorted(records_by_target[mkr], key=lambda item: item.received_at)
-        events = sorted(attachments_by_target[mkr], key=lambda item: (item.received_at, item.original_name))
+        events = sorted(
+            attachments_by_target[mkr],
+            key=lambda item: (item.received_at, item.entry_id, item.original_name.casefold()),
+        )
         if not records and not events:
             logger.info("[%s] 대상 메일이 없어 기존 시트를 유지합니다.", mkr)
             continue
-
-        candidates = original_order_candidates(events)
-        if not candidates:
-            raise DataValidationError(
-                f"{mkr}의 최초 원주문 첨부를 찾지 못했습니다. "
-                f"검색 시작일({config.start_date.isoformat()})을 원주문 메일 날짜 이전으로 설정해 주세요."
-            )
-
-        parsed_originals = []
-        for event in candidates:
-            try:
-                parsed = order_reader.read(event.path, mkr)
-            except MkrSyncError as exc:
-                logger.warning(
-                    "[%s] 원본 주문 후보 건너뜀: %s / %s",
-                    mkr,
-                    event.original_name,
-                    exc,
-                )
-                continue
-            logger.info("[%s] 원본 주문 후보 분석: %s / %d개", mkr, event.original_name, len(parsed))
-            if parsed:
-                parsed_originals.append((event, parsed))
-
-        selected_order = select_first_successful_order(parsed_originals)
-        if selected_order is None:
-            raise DataValidationError(
-                f"{mkr}의 원주문 후보에서 품목을 읽지 못했습니다. "
-                "검색 시작일과 원주문 첨부파일을 확인해 주세요."
-            )
-        first_event, baseline = selected_order
-        logger.info(
-            "[%s] 최초 유효 원본 주문 확정: %s / %d개",
-            mkr,
-            first_event.original_name,
-            len(baseline),
+        order_state = reconstruct_order_state(events, order_reader, mkr, logger)
+        warnings = list(order_state.warnings)
+        sales_evidence, sales_event, sales_warnings = _latest_sales_state(
+            events, records, read_pdf, mkr, logger
         )
-        validate_capacity(mkr, len(baseline), 0, config.max_rows)
+        warnings.extend(sales_warnings)
 
-        mail_by_entry = {record.entry_id: record for record in records}
-        normal_sales = [event for event in events if event.kind == "sales_note" and not event.is_revision]
-        sales_evidence = {}
         ship_date = eta = etd = None
-        if normal_sales:
-            first_sales = normal_sales[0]
-            first_sales_evidence = {}
-            for candidate in normal_sales:
-                pdf_evidence = parse_sales_note(read_pdf(candidate.path))
-                body_evidence = parse_sales_note(candidate.body)
-                candidate_evidence = merge_sales_evidence(pdf_evidence, body_evidence)
-                logger.info(
-                    "[%s] 일반 SALES NOTE 후보 분석: %s / %d개 품목",
-                    mkr,
-                    candidate.original_name,
-                    len(candidate_evidence),
-                )
-                if candidate_evidence:
-                    first_sales = candidate
-                    first_sales_evidence = candidate_evidence
-                    break
-            sales_evidence = first_sales_evidence
-            source_record = mail_by_entry.get(first_sales.entry_id)
-            if source_record:
-                reference = source_record.received_at
-                ship_date = parse_date_near_keywords(
-                    source_record.body,
-                    r"\b(?:Ship|Shipment|Shipping)\s*Date\b|出荷日|発送日|출하일|선적일",
-                    reference,
-                )
-                eta = parse_date_near_keywords(source_record.body, r"\bETA\b|到着予定|着港|도착예정", reference)
-                etd = parse_date_near_keywords(source_record.body, r"\bETD\b|出港|船積|출항", reference)
-            logger.info(
-                "[%s] 최초 일반 SALES NOTE 확정: %s / %d개 품목",
-                mkr,
-                first_sales.original_name,
-                len(sales_evidence),
-            )
-        else:
-            logger.warning("[%s] 일반 SALES NOTE가 없어 Shipped QTY fallback을 적용합니다.", mkr)
-
-        # Follow-up schedule messages override earlier values only when they
-        # contain an explicit date. This keeps the first Sales Note as the
-        # quantity baseline while allowing later ETA/ETD updates.
         for record in records:
             reference = record.received_at
             ship_date = parse_date_near_keywords(
@@ -181,57 +307,77 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
                 r"\b(?:Ship|Shipment|Shipping)\s*Date\b|出荷日|発送日|출하일|선적일",
                 reference,
             ) or ship_date
-            eta = parse_date_near_keywords(
-                record.body, r"\bETA\b|到着予定|着港|도착예정", reference
-            ) or eta
-            etd = parse_date_near_keywords(
-                record.body, r"\bETD\b|出港|船積|출항", reference
-            ) or etd
+            eta = parse_date_near_keywords(record.body, r"\bETA\b|到着予定|着港|도착예정", reference) or eta
+            etd = parse_date_near_keywords(record.body, r"\bETD\b|出港|船積|출항", reference) or etd
 
         sales_by_entry = defaultdict(list)
         for event in events:
             if event.kind == "sales_note":
                 sales_by_entry[event.entry_id].append(event)
-
         ledger: dict[tuple[str, str], BackorderSnapshot] = {}
         for record in records:
             event_snapshot = parse_backorders(
-                record.body,
-                mkr,
-                record.received_at,
-                f"메일 본문 {record.received_at:%Y-%m-%d %H:%M}",
+                record.body, mkr, record.received_at, f"메일 본문 {record.received_at:%Y-%m-%d %H:%M}"
             )
             seen_pdf_hashes: set[str] = set()
             for event in sales_by_entry[record.entry_id]:
                 if event.sha256 in seen_pdf_hashes:
                     continue
                 seen_pdf_hashes.add(event.sha256)
-                pdf_snapshot = parse_backorders(
-                    read_pdf(event.path),
-                    mkr,
-                    event.received_at,
-                    f"SALES NOTE {event.original_name}",
+                event_snapshot.update(
+                    parse_backorders(
+                        read_pdf(event.path), mkr, event.received_at, f"SALES NOTE {event.original_name}"
+                    )
                 )
-                event_snapshot.update(pdf_snapshot)
             merge_latest_backorders(ledger, event_snapshot, mkr)
 
-        backorders = sorted(ledger.values(), key=lambda item: (item.source_mkr, item.code))
-        validate_capacity(mkr, len(baseline), len(backorders), config.max_rows)
-        decisions = build_decisions(mkr, baseline, sales_evidence, backorders)
+        backorders = []
+        for item in sorted(ledger.values(), key=lambda value: (value.source_mkr, value.code)):
+            current = order_state.items.get(item.code)
+            backorders.append(replace(item, origin=current.origin if current else "Unknown"))
+        validate_capacity(mkr, len(order_state.items), len(backorders), config.max_rows)
+        order_source = order_state.latest_event.original_name
+        sales_source = sales_event.original_name if sales_event else ""
+        decisions = build_decisions(
+            mkr,
+            order_state.items,
+            sales_evidence,
+            backorders,
+            sales_note_available=sales_event is not None,
+            order_source=order_source,
+            sales_note_source=sales_source,
+        )
+        if sales_event is None:
+            warnings.append("유효한 SALES NOTE가 없어 Shipped/Shortage QTY를 공란으로 유지했습니다.")
+        if any(item.record_status == "SALES_NOTE_ONLY" for item in decisions):
+            warnings.append("주문서에는 없고 SALES NOTE에서만 확인된 품목이 있습니다.")
+        if any(item.origin == "Unknown" for item in decisions):
+            warnings.append("파일명만으로 원산지를 판정하지 못한 품목이 있습니다.")
+        status = "READY_WITH_WARNING" if warnings else "READY"
         results.append(
             MkrResult(
                 mkr=mkr,
                 sheet=sheet_name,
                 decisions=decisions,
                 backorders=backorders,
-                order_date=first_event.received_at.date(),
+                order_date=order_state.first_event.received_at.date(),
                 ship_date=ship_date,
                 eta=eta,
                 etd=etd,
+                status=status,
+                warnings=warnings,
+                order_source=order_source,
+                sales_note_source=sales_source,
+                order_state_as_of=order_state.latest_event.received_at,
             )
         )
-        logger.info("[%s] 판정 완료: 신규 %d개 / 백오더 %d개", mkr, len(decisions), len(backorders))
-
+        logger.info(
+            "[%s] 판정 완료: 현재 주문 %d개 / 백오더 %d개 / %s",
+            mkr,
+            len(decisions),
+            len(backorders),
+            status,
+        )
     if not results:
-        raise DataValidationError("읽을 수 있는 최초 주문 자료가 없어 갱신할 시트가 없습니다.")
+        raise DataValidationError("읽을 수 있는 주문 자료가 없어 갱신할 시트가 없습니다.")
     return results

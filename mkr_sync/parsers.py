@@ -110,7 +110,13 @@ def current_message_body(body: object) -> str:
 
 
 def is_revision(value: object) -> bool:
-    return bool(re.search(r"(?i)(?:^|[\s_\-(])rev(?:ised|ision)?(?:[\s_\-).]|$)", clean_text(value)))
+    return bool(
+        re.search(
+            r"(?i)(?:^|[\s_\-(])rev(?:ised|ision)?\s*\d*(?:[\s_\-).]|$)|"
+            r"改訂|修正版?|수정본?|변경본?",
+            clean_text(value),
+        )
+    )
 
 
 def attachment_kind(filename: str, subject: str = "") -> tuple[str | None, bool]:

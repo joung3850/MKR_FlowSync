@@ -232,8 +232,6 @@ class WebApi:
             preview_result = preview_status.get("result")
             if not isinstance(preview_result, dict):
                 raise DataValidationError("미리보기 결과를 불러오지 못했습니다.")
-            if preview_result.get("errors"):
-                raise DataValidationError("미리보기 오류를 해결한 뒤 다시 분석해 주세요.")
             target_workbook = self.target_workbook
 
             def worker(cancel_event, progress):

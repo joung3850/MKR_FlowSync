@@ -120,6 +120,7 @@ class ParserTests(unittest.TestCase):
 
     def test_revision_and_attachment_classification(self):
         self.assertEqual(attachment_kind("Rev_MKR56_26_Order.xlsx"), ("order", True))
+        self.assertEqual(attachment_kind("MKR52_26 Rev3 A(KRW).xlsx"), ("order", True))
         self.assertEqual(attachment_kind("MKR56_26_SALES NOTE.pdf"), ("sales_note", False))
 
     def test_logistics_spreadsheets_are_not_original_orders(self):

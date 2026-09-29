@@ -89,6 +89,14 @@ class ApplyServiceTests(unittest.TestCase):
         self.assertEqual(result.decisions[0].shortage_qty, D("60"))
         self.assertEqual(result.backorders[0].received_at, datetime(2026, 8, 20, 10, 30))
 
+    def test_deserialize_pending_sales_note_keeps_unknown_quantities_blank(self):
+        payload = preview_payload(self.target)
+        item = payload["results"][0]["decisions"][0]
+        item.update({"s": None, "p": None, "shipped_qty": None, "shortage_qty": None})
+        results = deserialize_preview_results(payload)
+        self.assertIsNone(results[0].decisions[0].shipped_qty)
+        self.assertIsNone(results[0].decisions[0].shortage_qty)
+
     def test_changed_workbook_is_rejected_before_excel_automation(self):
         payload = preview_payload(self.target)
         self.target.write_bytes(b"changed after preview")
@@ -129,6 +137,26 @@ class ApplyServiceTests(unittest.TestCase):
         duplicate = api.apply_preview({"preview_job_id": preview_job_id})
         self.assertFalse(duplicate["ok"])
         self.assertIn("이미 Excel에 적용", duplicate["error"])
+
+    def test_web_api_allows_successful_results_when_another_mkr_failed(self):
+        api = WebApi(self.root, logging.getLogger("api-partial-apply-test"))
+        api.target_workbook = self.target
+        payload = preview_payload(self.target)
+        payload["errors"] = [
+            {"level": "error", "code": "DataValidationError", "message": "ambiguous", "mkr": "MKR55/26"}
+        ]
+        preview_job_id = api.jobs.start("outlook", lambda *_: payload)
+        for _ in range(100):
+            if api.jobs.status(preview_job_id)["state"] == "completed":
+                break
+            time.sleep(0.01)
+        with patch("mkr_sync.web_api.apply_preview_results", return_value={"kind": "excel_apply"}):
+            response = api.apply_preview({"preview_job_id": preview_job_id})
+            for _ in range(100):
+                if api.jobs.status(response["job_id"])["state"] == "completed":
+                    break
+                time.sleep(0.01)
+        self.assertTrue(response["ok"])
 
     def test_html_exposes_excel_apply_control(self):
         html = (Path(__file__).resolve().parents[1] / "mkr_sync" / "web" / "index.html").read_text(

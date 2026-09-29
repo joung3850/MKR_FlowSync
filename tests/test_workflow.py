@@ -4,9 +4,11 @@ from pathlib import Path
 import unittest
 
 from mkr_sync.errors import DataValidationError
-from mkr_sync.models import AttachmentEvent, BackorderSnapshot
+from mkr_sync.models import AttachmentEvent, BackorderSnapshot, OrderItem
 from mkr_sync.workflow import (
+    apply_order_version,
     merge_latest_backorders,
+    merge_order_group,
     original_order_candidates,
     select_first_successful_order,
     validate_capacity,
@@ -38,8 +40,60 @@ class WorkflowTests(unittest.TestCase):
             event("first", "Rev_A.xlsx", "ddd", revision=True),
         ]
         selected = original_order_candidates(events)
-        self.assertEqual({item.sha256 for item in selected}, {"aaa", "bbb", "ccc"})
-        self.assertEqual(len(selected), 3)
+        self.assertEqual({item.sha256 for item in selected}, {"aaa", "bbb", "ccc", "ddd"})
+        self.assertEqual(len(selected), 4)
+
+    def test_country_parts_are_combined_and_origin_is_preserved(self):
+        japan = event("mail", "MKR55_26 A(KRW).xlsx", "a")
+        thailand = event("mail", "MKR55_26 B(THB).xlsx", "b")
+        combined = merge_order_group(
+            [
+                (japan, {"162365": OrderItem("162365", "JP", D("72"))}),
+                (thailand, {"236305": OrderItem("236305", "TH", D("42"))}),
+            ]
+        )
+        self.assertEqual(set(combined), {"162365", "236305"})
+        self.assertEqual(combined["162365"].origin, "Japan")
+        self.assertEqual(combined["236305"].origin, "Thailand")
+
+    def test_same_code_from_two_countries_is_summed_as_mixed_origin(self):
+        japan = event("mail", "MKR55_26 A(KRW).xlsx", "a")
+        thailand = event("mail", "MKR55_26 B(THB).xlsx", "b")
+        combined = merge_order_group(
+            [
+                (japan, {"162365": OrderItem("162365", "Shared", D("40"))}),
+                (thailand, {"162365": OrderItem("162365", "Shared", D("32"))}),
+            ]
+        )
+        self.assertEqual(combined["162365"].quantity, D("72"))
+        self.assertEqual(combined["162365"].origin, "Mixed")
+
+    def test_revision_replaces_state_and_addition_appends(self):
+        initial = {
+            "111111": OrderItem("111111", "A", D("10")),
+            "222222": OrderItem("222222", "B", D("20")),
+        }
+        revision = {"222222": OrderItem("222222", "B", D("25"))}
+        revised, warning = apply_order_version(initial, revision, "revision")
+        self.assertIsNone(warning)
+        self.assertEqual(set(revised), {"222222"})
+        added, warning = apply_order_version(
+            revised, {"162365": OrderItem("162365", "C", D("72"))}, "addition"
+        )
+        self.assertIsNone(warning)
+        self.assertEqual(set(added), {"222222", "162365"})
+
+    def test_ambiguous_partial_addition_stops_only_that_state(self):
+        current = {
+            "111111": OrderItem("111111", "A", D("10")),
+            "222222": OrderItem("222222", "B", D("20")),
+        }
+        incoming = {
+            "222222": OrderItem("222222", "B", D("20")),
+            "333333": OrderItem("333333", "C", D("30")),
+        }
+        with self.assertRaises(DataValidationError):
+            apply_order_version(current, incoming, "addition")
 
     def test_first_successful_order_skips_empty_and_uses_most_complete_at_same_time(self):
         empty = event("first", "Lot No.xlsx", "aaa")

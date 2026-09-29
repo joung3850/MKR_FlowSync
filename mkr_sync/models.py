@@ -20,6 +20,8 @@ class OrderItem:
     # is already the current MKR order and must not be reduced again by the
     # separate backorder ledger.
     backorders_separated: bool = False
+    origin: str = "Unknown"
+    source: str = ""
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,7 @@ class BackorderSnapshot:
     shipped_qty: Decimal
     received_at: datetime
     source: str
+    origin: str = "Unknown"
 
     @property
     def shortage_qty(self) -> Decimal:
@@ -55,19 +58,25 @@ class QuantityDecision:
     mkr: str
     code: str
     name: str
-    raw_order_qty: Decimal
-    first_shipped_qty: Decimal
+    raw_order_qty: Decimal | None
+    first_shipped_qty: Decimal | None
     sales_note_order_qty: Decimal | None
     backorder_order_qty: Decimal
     backorder_shipped_qty: Decimal
-    order_qty: Decimal
-    shipped_qty: Decimal
+    order_qty: Decimal | None
+    shipped_qty: Decimal | None
     rule_id: str
     shipped_fallback: bool = False
     shipped_adjusted: bool = False
+    origin: str = "Unknown"
+    record_status: str = "CURRENT"
+    order_source: str = ""
+    sales_note_source: str = ""
 
     @property
-    def shortage_qty(self) -> Decimal:
+    def shortage_qty(self) -> Decimal | None:
+        if self.order_qty is None or self.shipped_qty is None:
+            return None
         return max(ZERO, self.order_qty - self.shipped_qty)
 
 
@@ -81,6 +90,11 @@ class MkrResult:
     ship_date: date | None = None
     eta: date | None = None
     etd: date | None = None
+    status: str = "READY"
+    warnings: list[str] = field(default_factory=list)
+    order_source: str = ""
+    sales_note_source: str = ""
+    order_state_as_of: datetime | None = None
 
 
 @dataclass(frozen=True)

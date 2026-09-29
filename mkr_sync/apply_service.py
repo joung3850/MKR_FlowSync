@@ -23,6 +23,10 @@ def _decimal(value: object, label: str) -> Decimal:
         raise DataValidationError(f"미리보기 수량값이 올바르지 않습니다: {label}") from exc
 
 
+def _optional_decimal(value: object, label: str) -> Decimal | None:
+    return None if value in (None, "") else _decimal(value, label)
+
+
 def _date(value: object, label: str) -> date | None:
     if value in (None, ""):
         return None
@@ -73,8 +77,8 @@ def deserialize_preview_results(payload: dict) -> list[MkrResult]:
                     mkr=mkr,
                     code=code,
                     name=name,
-                    raw_order_qty=_decimal(item.get("r"), f"{mkr}/{code}/R"),
-                    first_shipped_qty=_decimal(item.get("s"), f"{mkr}/{code}/S"),
+                    raw_order_qty=_optional_decimal(item.get("r"), f"{mkr}/{code}/R"),
+                    first_shipped_qty=_optional_decimal(item.get("s"), f"{mkr}/{code}/S"),
                     sales_note_order_qty=(
                         None
                         if sales_note in (None, "")
@@ -82,11 +86,15 @@ def deserialize_preview_results(payload: dict) -> list[MkrResult]:
                     ),
                     backorder_order_qty=_decimal(item.get("k"), f"{mkr}/{code}/K"),
                     backorder_shipped_qty=_decimal(item.get("l"), f"{mkr}/{code}/L"),
-                    order_qty=_decimal(item.get("order_qty"), f"{mkr}/{code}/Order"),
-                    shipped_qty=_decimal(item.get("shipped_qty"), f"{mkr}/{code}/Shipped"),
+                    order_qty=_optional_decimal(item.get("order_qty"), f"{mkr}/{code}/Order"),
+                    shipped_qty=_optional_decimal(item.get("shipped_qty"), f"{mkr}/{code}/Shipped"),
                     rule_id=str(item.get("rule", "")).strip(),
                     shipped_fallback=bool(item.get("shipped_fallback", False)),
                     shipped_adjusted=bool(item.get("shipped_adjusted", False)),
+                    origin=str(item.get("origin", "Unknown")).strip() or "Unknown",
+                    record_status=str(item.get("record_status", "CURRENT")).strip() or "CURRENT",
+                    order_source=str(item.get("order_source", "")).strip(),
+                    sales_note_source=str(item.get("sales_note_source", "")).strip(),
                 )
             )
 
@@ -109,6 +117,7 @@ def deserialize_preview_results(payload: dict) -> list[MkrResult]:
                     shipped_qty=_decimal(item.get("shipped_qty"), f"{mkr}/{code}/Backorder Shipped"),
                     received_at=_datetime(item.get("received_at"), f"{mkr}/{code}/Received"),
                     source=str(item.get("source", "")).strip(),
+                    origin=str(item.get("origin", "Unknown")).strip() or "Unknown",
                 )
             )
 
@@ -122,6 +131,15 @@ def deserialize_preview_results(payload: dict) -> list[MkrResult]:
                 ship_date=_date(raw_result.get("ship_date"), f"{mkr}/Ship Date"),
                 eta=_date(raw_result.get("eta"), f"{mkr}/ETA"),
                 etd=_date(raw_result.get("etd"), f"{mkr}/ETD"),
+                status=str(raw_result.get("status", "READY")).strip() or "READY",
+                warnings=[str(value) for value in raw_result.get("warnings", [])],
+                order_source=str(raw_result.get("order_source", "")).strip(),
+                sales_note_source=str(raw_result.get("sales_note_source", "")).strip(),
+                order_state_as_of=(
+                    None
+                    if raw_result.get("order_state_as_of") in (None, "")
+                    else _datetime(raw_result.get("order_state_as_of"), f"{mkr}/Order State")
+                ),
             )
         )
     return results
@@ -137,9 +155,6 @@ def apply_preview_results(
 ) -> dict:
     if preview_payload.get("kind") != "outlook_preview":
         raise DataValidationError("Outlook 미리보기 결과가 아닙니다. 다시 분석해 주세요.")
-    if preview_payload.get("errors"):
-        raise DataValidationError("미리보기 오류가 남아 있어 Excel에 적용할 수 없습니다.")
-
     target = Path(target_workbook).resolve()
     preview_target = Path(str(preview_payload.get("target_workbook", ""))).resolve()
     if os.path.normcase(str(target)) != os.path.normcase(str(preview_target)):
@@ -207,8 +222,9 @@ def apply_preview_results(
             "backup_path": str(backup),
             "report_path": str(report),
             "workbook_hash": updated_hash,
-            "warnings": [],
+            "warnings": list(preview_payload.get("warnings") or []),
             "errors": [],
+            "skipped": list(preview_payload.get("errors") or []),
         }
     finally:
         transaction.cleanup_pending()

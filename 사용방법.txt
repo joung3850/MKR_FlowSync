@@ -50,18 +50,24 @@ Excel 시트명은 MKR56_26, MKR56_26-1처럼 '/'가 '_'로 변환됩니다.
 3) 'Outlook 데이터 미리보기'를 누릅니다.
 
 프로그램은 제목에서 MKR을 우선 찾고 필요하면 현재 메일 본문을 확인합니다.
-주문 Excel, Sales Note PDF, 백오더 표와 후속 ETA/ETD 메일을 분석합니다.
+주문 Excel의 최초본·추가본·개정본을 시간순으로 재구성하고, 최신 유효 Sales Note PDF,
+백오더 표와 후속 ETA/ETD 메일을 분석합니다. 같은 메일의 A(KRW)/B(THB) 파일은
+각각 Japan/Thailand로 구분해 합칩니다.
 
 결과 화면에서 MKR 행을 선택하면 품목별 R·S·P·K·L과 적용 규칙을 볼 수 있습니다.
 Reports 폴더에는 MKR_PREVIEW_날짜시간.csv가 생성됩니다.
 첨부파일은 MKR_Attachments/Run_... 폴더에 저장됩니다.
 
-4) 오류가 없는 미리보기 결과를 확인합니다.
+4) 미리보기 결과와 '확인 필요/보류' MKR을 확인합니다.
 5) 'Excel에 적용'을 누르고 확인 창에서 적용을 승인합니다.
 
+일부 MKR이 모호한 주문 변경이나 손상된 첨부 때문에 실패해도, 분석에 성공한 MKR은
+계속 적용할 수 있습니다. 실패한 MKR 시트는 기존 값이 그대로 유지됩니다.
+
 적용 범위:
-- A10:E509: 신규 주문 품번, 품명, Order/Shipped/Shortage QTY
-- H10:M509: 이 MKR에 포함된 백오더 번호, 품번, 품명, 수량
+- A10:G509: 현재 주문 품번, 품명, Order/Shipped/Shortage QTY, Origin
+- H10:N509: 이 MKR에 포함된 백오더 번호, 품번, 품명, 수량, Origin
+- G8: READY 또는 READY_WITH_WARNING 상태
 - D3: MKR 번호
 - K4:K7: Order Date, Ship Date, ETA, ETD
 
@@ -71,12 +77,14 @@ Excel 적용 전 원본은 Backup 폴더에 저장됩니다. 프로그램은 pen
 
 5. 수량 판정 기호
 ----------------
-R = 최초 원본 주문수량
-S = 최초 일반 Sales Note 선적수량
-P = 최초 일반 Sales Note 주문수량
+R = 시간순 변경을 반영한 현재 주문수량
+S = 최신 유효 Sales Note 선적수량
+P = 최신 유효 Sales Note 주문수량
 K = 백오더 Order QTY 합계
 L = 이번 MKR에 포함된 백오더 Shipped QTY 합계
 
+Sales Note가 아직 없으면 Shipped/Shortage QTY를 추정하지 않고 공란으로 둡니다.
+주문서에 없지만 Sales Note에서 출하가 확인된 품목도 누락시키지 않고 SALES_NOTE_ONLY로 표시합니다.
 관계가 맞지 않거나 계산 결과가 음수이면 해당 MKR을 오류로 표시합니다. 다른 MKR은 가능한 범위에서 계속 분석합니다.
 
 6. 결과 폴더

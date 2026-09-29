@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from decimal import Decimal
 from typing import Iterable
 
@@ -184,7 +185,13 @@ def build_decisions(
     order_items: dict[str, OrderItem],
     sales_evidence: dict[str, SalesNoteEvidence],
     backorders: Iterable[BackorderSnapshot],
+    *,
+    sales_note_available: bool | None = None,
+    order_source: str = "",
+    sales_note_source: str = "",
 ) -> list[QuantityDecision]:
+    if sales_note_available is None:
+        sales_note_available = bool(sales_evidence)
     totals: dict[str, list[Decimal]] = defaultdict(lambda: [ZERO, ZERO])
     for item in backorders:
         totals[item.code][0] += item.order_qty
@@ -195,21 +202,59 @@ def build_decisions(
         item = order_items[code]
         evidence = sales_evidence.get(code)
         k_qty, l_qty = totals[code]
-        # Once the Sales Note itself was parsed successfully, a current-order
-        # item omitted from it has an actual shipped quantity of zero.  Only
-        # fall back when no usable Sales Note exists at all (or its row has no
-        # quantity), never merely because a particular code is absent.
-        omitted_from_parsed_sales_note = (
-            item.backorders_separated and bool(sales_evidence) and evidence is None
+
+        # A missing Sales Note is an unknown shipment, not a shipment equal to
+        # the order.  Preserve the current order state and leave shipment and
+        # shortage blank until evidence arrives.
+        if not sales_note_available:
+            if item.backorders_separated:
+                order_qty = item.quantity
+            elif item.quantity >= k_qty:
+                order_qty = item.quantity - k_qty
+            else:
+                bad = RuleContext(
+                    mkr=mkr,
+                    code=code,
+                    raw_order_qty=item.quantity,
+                    first_shipped_qty=ZERO,
+                    sales_note_order_qty=None,
+                    backorder_order_qty=k_qty,
+                    backorder_shipped_qty=l_qty,
+                    attempted_rule="R11_PENDING_SALES_NOTE",
+                )
+                raise QuantityRuleError(
+                    "Sales Note 미수신 상태에서 현재 주문수량과 백오더를 분리할 수 없습니다.",
+                    bad,
+                )
+            decisions.append(
+                QuantityDecision(
+                    mkr=mkr,
+                    code=code,
+                    name=item.name,
+                    raw_order_qty=item.quantity,
+                    first_shipped_qty=None,
+                    sales_note_order_qty=None,
+                    backorder_order_qty=k_qty,
+                    backorder_shipped_qty=l_qty,
+                    order_qty=order_qty,
+                    shipped_qty=None,
+                    rule_id="R11_PENDING_SALES_NOTE",
+                    origin=item.origin,
+                    record_status="PENDING_SALES_NOTE",
+                    order_source=item.source or order_source,
+                    sales_note_source="",
+                )
+            )
+            continue
+
+        # A code omitted from a successfully parsed latest Sales Note has no
+        # current shipment.  This is different from having no Sales Note at
+        # all, and therefore resolves to an explicit zero.
+        omitted_from_parsed_sales_note = evidence is None
+        shipped_fallback = evidence is not None and evidence.shipped_qty is None
+        first_shipped = ZERO if omitted_from_parsed_sales_note else (
+            item.quantity if shipped_fallback else evidence.shipped_qty
         )
-        shipped_fallback = (
-            not omitted_from_parsed_sales_note
-            and (evidence is None or evidence.shipped_qty is None)
-        )
-        if omitted_from_parsed_sales_note:
-            first_shipped = ZERO
-        else:
-            first_shipped = item.quantity if shipped_fallback else evidence.shipped_qty
         if (
             item.backorders_separated
             and not shipped_fallback
@@ -238,18 +283,77 @@ def build_decisions(
                 )
             first_shipped = evidence.shipped_qty - l_qty
         sales_order = None if evidence is None else evidence.order_qty
+        decision = decide_quantity(
+            mkr=mkr,
+            code=code,
+            name=item.name,
+            raw_order_qty=item.quantity,
+            first_shipped_qty=first_shipped,
+            sales_note_order_qty=sales_order,
+            backorder_order_qty=k_qty,
+            backorder_shipped_qty=l_qty,
+            shipped_fallback=shipped_fallback,
+            backorders_separated=item.backorders_separated,
+        )
         decisions.append(
-            decide_quantity(
-                mkr=mkr,
-                code=code,
-                name=item.name,
-                raw_order_qty=item.quantity,
-                first_shipped_qty=first_shipped,
-                sales_note_order_qty=sales_order,
-                backorder_order_qty=k_qty,
-                backorder_shipped_qty=l_qty,
-                shipped_fallback=shipped_fallback,
-                backorders_separated=item.backorders_separated,
+            replace(
+                decision,
+                origin=item.origin,
+                record_status=("OMITTED_FROM_SALES_NOTE" if omitted_from_parsed_sales_note else "CURRENT"),
+                order_source=item.source or order_source,
+                sales_note_source=sales_note_source,
             )
         )
+
+    # The Sales Note is shipment evidence.  After independently identified
+    # historical backorders are allocated first, a positive remainder is a
+    # current-MKR item even when no order workbook row was found.
+    for code in sorted(set(sales_evidence).difference(order_items)):
+        evidence = sales_evidence[code]
+        k_qty, l_qty = totals[code]
+        if evidence.shipped_qty is None:
+            continue
+        if evidence.shipped_qty < l_qty:
+            bad = RuleContext(
+                mkr=mkr,
+                code=code,
+                raw_order_qty=ZERO,
+                first_shipped_qty=evidence.shipped_qty,
+                sales_note_order_qty=evidence.order_qty,
+                backorder_order_qty=k_qty,
+                backorder_shipped_qty=l_qty,
+                attempted_rule="R12_SALES_NOTE_ONLY",
+            )
+            raise QuantityRuleError(
+                "Sales Note 전용 품목의 출하량이 확인된 백오더 출하량보다 작습니다.",
+                bad,
+            )
+        current_shipped = evidence.shipped_qty - l_qty
+        if current_shipped == ZERO:
+            continue
+        current_order: Decimal | None = None
+        if evidence.order_qty is not None and evidence.order_qty >= k_qty:
+            candidate = evidence.order_qty - k_qty
+            if candidate >= current_shipped:
+                current_order = candidate
+        decisions.append(
+            QuantityDecision(
+                mkr=mkr,
+                code=code,
+                name=evidence.name,
+                raw_order_qty=None,
+                first_shipped_qty=evidence.shipped_qty,
+                sales_note_order_qty=evidence.order_qty,
+                backorder_order_qty=k_qty,
+                backorder_shipped_qty=l_qty,
+                order_qty=current_order,
+                shipped_qty=current_shipped,
+                rule_id="R12_SALES_NOTE_ONLY",
+                origin="Unknown",
+                record_status="SALES_NOTE_ONLY",
+                order_source="",
+                sales_note_source=sales_note_source,
+            )
+        )
+    decisions.sort(key=lambda item: item.code)
     return decisions

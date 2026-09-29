@@ -259,7 +259,9 @@ def _as_matrix(value) -> list[list[object]]:
     return [[value]]
 
 
-def _decimal_for_excel(value: Decimal) -> int | float:
+def _decimal_for_excel(value: Decimal | None) -> int | float | None:
+    if value is None:
+        return None
     if value == value.to_integral_value():
         return int(value)
     return float(value)
@@ -418,8 +420,8 @@ class WorkbookTransaction:
                 f"A:E={len(result.decisions)} / H:M={len(result.backorders)}"
             )
         first, last = self.config.data_start_row, self.config.data_last_row
-        sheet.Range(f"A{first}:E{last}").ClearContents()
-        sheet.Range(f"H{first}:M{last}").ClearContents()
+        sheet.Range(f"A{first}:G{last}").ClearContents()
+        sheet.Range(f"H{first}:N{last}").ClearContents()
 
         if result.decisions:
             end = first + len(result.decisions) - 1
@@ -450,6 +452,26 @@ class WorkbookTransaction:
             sheet.Range(f"H{first}:J{end}").NumberFormat = "@"
             sheet.Range(f"H{first}:J{end}").Value2 = text_values
             sheet.Range(f"K{first}:M{end}").Value2 = number_values
+
+        # Migrate legacy sheets in place: the formerly blank G/N columns
+        # inherit the adjacent table styles before receiving Origin values.
+        sheet.Range(f"E9:E{last}").Copy(sheet.Range(f"G9:G{last}"))
+        sheet.Range(f"M9:M{last}").Copy(sheet.Range(f"N9:N{last}"))
+        sheet.Range(f"G{first}:G{last}").ClearContents()
+        sheet.Range(f"N{first}:N{last}").ClearContents()
+        sheet.Columns("G").ColumnWidth = 12
+        sheet.Columns("N").ColumnWidth = 12
+        sheet.Range("G9").Value2 = "Origin"
+        sheet.Range("N9").Value2 = "Origin"
+        sheet.Range("G8").Value2 = result.status
+        if result.decisions:
+            end = first + len(result.decisions) - 1
+            sheet.Range(f"G{first}:G{end}").NumberFormat = "@"
+            sheet.Range(f"G{first}:G{end}").Value2 = _matrix((d.origin,) for d in result.decisions)
+        if result.backorders:
+            end = first + len(result.backorders) - 1
+            sheet.Range(f"N{first}:N{end}").NumberFormat = "@"
+            sheet.Range(f"N{first}:N{end}").Value2 = _matrix((b.origin,) for b in result.backorders)
 
         sheet.Range("D3").Value2 = result.mkr
         sheet.Range("K4:K7").ClearContents()
@@ -519,19 +541,21 @@ class WorkbookTransaction:
             pythoncom.CoUninitialize()
 
     def _validate_sheet(self, sheet, result: MkrResult) -> None:
-        headers = tuple(sheet.Range("A9:M9").Value2[0])
+        headers = tuple(sheet.Range("A9:N9").Value2[0])
         expected = {
             0: "Code",
             1: "Name",
             2: "Order QTY",
             3: "Shipped QTY",
             4: "Shortage QTY",
+            6: "Origin",
             7: "Back Order NO.",
             8: "Code",
             9: "Name",
             10: "Order QTY",
             11: "Shipped QTY",
             12: "Shortage QTY",
+            13: "Origin",
         }
         for index, label in expected.items():
             if clean_text(headers[index]) != label:
@@ -546,22 +570,28 @@ class WorkbookTransaction:
         first = self.config.data_start_row
         for offset, decision in enumerate(result.decisions):
             row = first + offset
-            values = tuple(sheet.Range(f"A{row}:E{row}").Value2[0])
+            values = tuple(sheet.Range(f"A{row}:G{row}").Value2[0])
             if clean_text(values[0]).zfill(6) != decision.code:
                 raise WorkbookCommitError(f"{result.sheet} A:E 품번 검증 실패: {decision.code}")
-            actual = tuple(Decimal(str(values[i])) for i in range(2, 5))
+            actual = tuple(None if values[i] is None else Decimal(str(values[i])) for i in range(2, 5))
             expected_qty = (decision.order_qty, decision.shipped_qty, decision.shortage_qty)
             if actual != expected_qty:
                 raise WorkbookCommitError(f"{result.sheet} A:E 수량 검증 실패: {decision.code}")
+            if clean_text(values[6]) != decision.origin:
+                raise WorkbookCommitError(f"{result.sheet} G열 원산지 검증 실패: {decision.code}")
         for offset, backorder in enumerate(result.backorders):
             row = first + offset
-            values = tuple(sheet.Range(f"H{row}:M{row}").Value2[0])
+            values = tuple(sheet.Range(f"H{row}:N{row}").Value2[0])
             if clean_text(values[0]) != backorder.source_mkr or clean_text(values[1]).zfill(6) != backorder.code:
                 raise WorkbookCommitError(f"{result.sheet} H:M 키 검증 실패: {backorder.source_mkr}/{backorder.code}")
             actual = tuple(Decimal(str(values[i])) for i in range(3, 6))
             expected_qty = (backorder.order_qty, backorder.shipped_qty, backorder.shortage_qty)
             if actual != expected_qty:
                 raise WorkbookCommitError(f"{result.sheet} H:M 수량 검증 실패: {backorder.code}")
+            if clean_text(values[6]) != backorder.origin:
+                raise WorkbookCommitError(f"{result.sheet} N열 원산지 검증 실패: {backorder.code}")
+        if clean_text(sheet.Range("G8").Value2) != result.status:
+            raise WorkbookCommitError(f"{result.sheet} 상태 검증 실패")
 
     def _data_number_formats(self, sheet) -> dict[str, str]:
         first = self.config.data_start_row

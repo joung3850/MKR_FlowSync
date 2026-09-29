@@ -21,12 +21,14 @@ EXPECTED_HEADERS = {
     2: "Order QTY",
     3: "Shipped QTY",
     4: "Shortage QTY",
+    6: "Origin",
     7: "Back Order NO.",
     8: "Code",
     9: "Name",
     10: "Order QTY",
     11: "Shipped QTY",
     12: "Shortage QTY",
+    13: "Origin",
 }
 
 
@@ -64,19 +66,24 @@ def _merged_ranges(sheet) -> tuple[str, ...]:
 
 def _structure_fingerprint(sheet) -> tuple:
     used = sheet.UsedRange
-    headers = tuple(_clean(value) for value in sheet.Range("A9:M9").Value2[0])
+    headers = list(_clean(value) for value in sheet.Range("A9:N9").Value2[0])
+    for index in (6, 13):
+        if not headers[index]:
+            headers[index] = "Origin"
     return (
         str(used.Address),
         int(used.Rows.Count),
         int(used.Columns.Count),
         _merged_ranges(sheet),
-        headers,
+        tuple(headers),
     )
 
 
-def _validate_headers(sheet, label: str) -> None:
-    values = tuple(_clean(value) for value in sheet.Range("A9:M9").Value2[0])
+def _validate_headers(sheet, label: str, allow_legacy_origin: bool = True) -> None:
+    values = tuple(_clean(value) for value in sheet.Range("A9:N9").Value2[0])
     for index, expected in EXPECTED_HEADERS.items():
+        if allow_legacy_origin and index in (6, 13) and not values[index]:
+            continue
         if index >= len(values) or values[index] != expected:
             actual = values[index] if index < len(values) else ""
             raise DataValidationError(
@@ -104,8 +111,13 @@ def _validate_existing_sheet(sheet, mkr_number: str, template_fingerprint: tuple
             f"예상={mkr_number} / 실제={current or '빈 셀'}"
         )
     _validate_headers(sheet, str(sheet.Name))
-    if template_fingerprint is not None and _structure_fingerprint(sheet) != template_fingerprint:
-        raise DataValidationError(f"기존 시트 {sheet.Name}의 구조가 외부 템플릿과 다릅니다.")
+    if template_fingerprint is not None:
+        current_fingerprint = _structure_fingerprint(sheet)
+        # Legacy sheets may end at column M while the current template uses
+        # the previously blank G/N columns for Origin.  Header validation and
+        # merge-layout equality are sufficient for a safe in-place migration.
+        if current_fingerprint[3] != template_fingerprint[3]:
+            raise DataValidationError(f"기존 시트 {sheet.Name}의 병합 구조가 외부 템플릿과 다릅니다.")
 
 
 def _disk_sheet_names(path: Path) -> set[str] | None:
@@ -230,7 +242,7 @@ def create_mkr_sheets(
             if template_name not in _sheet_names(template_book):
                 raise DataValidationError(f"템플릿 파일에 {template_name} 시트가 없습니다.")
             template_sheet = template_book.Worksheets.Item(template_name)
-            _validate_headers(template_sheet, template_name)
+            _validate_headers(template_sheet, template_name, allow_legacy_origin=False)
             _validate_no_external_formulas(template_sheet)
             template_fingerprint = _structure_fingerprint(template_sheet)
 

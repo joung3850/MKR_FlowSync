@@ -34,6 +34,9 @@ class PreviewConfig:
 
 
 def _result_dict(result: MkrResult) -> dict:
+    def quantity(value):
+        return None if value is None else str(value)
+
     return {
         "mkr": result.mkr,
         "sheet": result.sheet,
@@ -41,23 +44,34 @@ def _result_dict(result: MkrResult) -> dict:
         "ship_date": result.ship_date.isoformat() if result.ship_date else None,
         "eta": result.eta.isoformat() if result.eta else None,
         "etd": result.etd.isoformat() if result.etd else None,
+        "status": result.status,
+        "warnings": list(result.warnings),
+        "order_source": result.order_source,
+        "sales_note_source": result.sales_note_source,
+        "order_state_as_of": (
+            result.order_state_as_of.isoformat() if result.order_state_as_of else None
+        ),
         "new_order_count": len(result.decisions),
         "backorder_count": len(result.backorders),
         "decisions": [
             {
                 "code": item.code,
                 "name": item.name,
-                "r": str(item.raw_order_qty),
-                "s": str(item.first_shipped_qty),
-                "p": None if item.sales_note_order_qty is None else str(item.sales_note_order_qty),
+                "r": quantity(item.raw_order_qty),
+                "s": quantity(item.first_shipped_qty),
+                "p": quantity(item.sales_note_order_qty),
                 "k": str(item.backorder_order_qty),
                 "l": str(item.backorder_shipped_qty),
-                "order_qty": str(item.order_qty),
-                "shipped_qty": str(item.shipped_qty),
-                "shortage_qty": str(item.shortage_qty),
+                "order_qty": quantity(item.order_qty),
+                "shipped_qty": quantity(item.shipped_qty),
+                "shortage_qty": quantity(item.shortage_qty),
                 "rule": item.rule_id,
                 "shipped_fallback": item.shipped_fallback,
                 "shipped_adjusted": item.shipped_adjusted,
+                "origin": item.origin,
+                "record_status": item.record_status,
+                "order_source": item.order_source,
+                "sales_note_source": item.sales_note_source,
             }
             for item in result.decisions
         ],
@@ -71,6 +85,7 @@ def _result_dict(result: MkrResult) -> dict:
                 "shortage_qty": str(item.shortage_qty),
                 "received_at": item.received_at.isoformat(),
                 "source": item.source,
+                "origin": item.origin,
             }
             for item in result.backorders
         ],
@@ -132,12 +147,12 @@ def run_preview(
         try:
             built = build_results(config, subset, logger)
             results.extend(built)
-            if built and any(item.shipped_fallback for item in built[0].decisions):
+            for message in built[0].warnings if built else []:
                 warnings.append(
                     {
                         "level": "warning",
-                        "code": "SHIPPED_FALLBACK",
-                        "message": "Sales Note의 Shipped QTY가 없어 주문 수량을 사용한 품목이 있습니다.",
+                        "code": "REVIEW_RECOMMENDED",
+                        "message": message,
                         "mkr": mkr,
                     }
                 )
