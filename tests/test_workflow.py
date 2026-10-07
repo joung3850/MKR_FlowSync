@@ -10,6 +10,7 @@ from mkr_sync.workflow import (
     merge_latest_backorders,
     merge_order_group,
     original_order_candidates,
+    reconstruct_order_state,
     select_first_successful_order,
     validate_capacity,
 )
@@ -31,6 +32,17 @@ def event(entry_id, name, digest, minutes=0, revision=False):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_missing_order_attachment_returns_empty_state_for_sales_note_fallback(self):
+        class Logger:
+            def warning(self, *args):
+                pass
+
+        state = reconstruct_order_state([], object(), "MKR56/26-2", Logger())
+        self.assertEqual(state.items, {})
+        self.assertIsNone(state.first_event)
+        self.assertIsNone(state.latest_event)
+        self.assertIn("Sales Note", state.warnings[0])
+
     def test_order_candidates_include_later_files_and_deduplicate_hash(self):
         events = [
             event("first", "A.xlsx", "aaa"),

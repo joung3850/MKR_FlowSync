@@ -74,6 +74,9 @@ MKR_SYNC.exe
 - 최신 유효 Sales Note, 최신 백오더 스냅샷, 후속 일정 메일을 분석한다.
 - Sales Note 미수신 시 Shipped/Shortage를 추정하지 않고 공란으로 유지한다.
 - 주문서에는 없지만 Sales Note에 남은 출하 품목을 `SALES_NOTE_ONLY`로 보존한다.
+- 원주문 첨부가 없거나 특정 주문 버전이 충돌해도 Sales Note·백오더의 독립 근거로 분석을 계속한다.
+- 품목별 수량 검증 실패는 `REVIEW_REQUIRED`로 격리하고 확인된 Order만 기록하며 Shipped/Shortage는 공란으로 둔다.
+- 주문·Sales Note·백오더 근거가 모두 없는 MKR은 빈 값으로 덮어쓰지 않고 기존 시트를 보존한다.
 - PDF는 `pypdf` 텍스트 추출을 우선하고 실패하면 Word COM을 보조 수단으로 사용한다.
 - 한 MKR 분석이 실패해도 다음 MKR을 계속 분석하고 오류를 마지막에 모아 표시한다.
 

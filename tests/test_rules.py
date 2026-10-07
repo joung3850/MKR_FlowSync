@@ -136,6 +136,22 @@ class QuantityRuleTests(unittest.TestCase):
         self.assertEqual(result.rule_id, "R7_MISSING_SALES_ORDER")
         self.assertEqual((result.order_qty, result.shipped_qty), (D("480"), D("480")))
 
+    def test_mkr56_760254_missing_sales_splits_shipped_by_full_backorder_order(self):
+        result = self.decide(
+            code="760254",
+            raw_order_qty=D("1080"),
+            first_shipped_qty=D("1080"),
+            sales_note_order_qty=None,
+            backorder_order_qty=D("660"),
+            backorder_shipped_qty=D("600"),
+        )
+        self.assertEqual(result.rule_id, "R13_MISSING_SALES_SHIPPED_INCLUDES_K")
+        self.assertEqual(
+            (result.order_qty, result.shipped_qty, result.shortage_qty),
+            (D("420"), D("420"), D("0")),
+        )
+        self.assertTrue(result.shipped_adjusted)
+
     def test_missing_sales_with_k_above_order_uses_l_crosscheck(self):
         result = self.decide(
             code="754303",
@@ -269,6 +285,39 @@ class QuantityRuleTests(unittest.TestCase):
         self.assertEqual(result.rule_id, "R12_SALES_NOTE_ONLY")
         self.assertEqual((result.order_qty, result.shipped_qty), (D("72"), D("72")))
         self.assertEqual(result.record_status, "SALES_NOTE_ONLY")
+
+    def test_invalid_item_becomes_review_row_without_blocking_other_items(self):
+        warnings = []
+        decisions = build_decisions(
+            "MKR56/26",
+            {
+                "760254": OrderItem("760254", "Needs review", D("100")),
+                "760255": OrderItem("760255", "Valid", D("50")),
+            },
+            {
+                "760254": SalesNoteEvidence("760254", "Needs review", None, D("200")),
+                "760255": SalesNoteEvidence("760255", "Valid", D("50"), D("50")),
+            },
+            [],
+            warning_sink=warnings,
+        )
+        by_code = {item.code: item for item in decisions}
+        self.assertEqual(by_code["760254"].rule_id, "R90_REVIEW_REQUIRED")
+        self.assertEqual(by_code["760254"].order_qty, D("100"))
+        self.assertIsNone(by_code["760254"].shipped_qty)
+        self.assertEqual(by_code["760255"].order_qty, D("50"))
+        self.assertTrue(warnings)
+
+    def test_sales_note_only_order_is_kept_when_shipped_is_missing(self):
+        decisions = build_decisions(
+            "MKR56/26-2",
+            {},
+            {"760254": SalesNoteEvidence("760254", "Sales only", D("420"), None)},
+            [],
+            sales_note_available=True,
+        )
+        self.assertEqual(decisions[0].order_qty, D("420"))
+        self.assertIsNone(decisions[0].shipped_qty)
 
 
 if __name__ == "__main__":

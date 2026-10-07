@@ -16,8 +16,8 @@ from .rules import build_decisions
 @dataclass(frozen=True)
 class OrderState:
     items: dict[str, OrderItem]
-    first_event: AttachmentEvent
-    latest_event: AttachmentEvent
+    first_event: AttachmentEvent | None
+    latest_event: AttachmentEvent | None
     warnings: tuple[str, ...] = ()
 
 
@@ -168,7 +168,11 @@ def apply_order_version(
 def reconstruct_order_state(events, order_reader, mkr: str, logger) -> OrderState:
     candidates = original_order_candidates(events)
     if not candidates:
-        raise DataValidationError(f"{mkr}의 주문 첨부를 찾지 못했습니다.")
+        message = (
+            "주문 첨부를 찾지 못했습니다. Sales Note와 백오더에서 확인되는 값만 반영합니다."
+        )
+        logger.warning("[%s] %s", mkr, message)
+        return OrderState({}, None, None, (message,))
     grouped: dict[str, list[AttachmentEvent]] = defaultdict(list)
     for event in candidates:
         key = event.entry_id or f"{event.received_at.isoformat()}::{event.original_name}"
@@ -195,10 +199,17 @@ def reconstruct_order_state(events, order_reader, mkr: str, logger) -> OrderStat
                 logger.info("[%s] 주문 버전 분석: %s / %d개", mkr, event.original_name, len(parsed))
         if not parsed_group:
             continue
-        incoming = merge_order_group(parsed_group)
-        role = _event_role([event for event, _items in parsed_group])
-        state, warning = apply_order_version(state, incoming, role)
         applied_event = max((event for event, _items in parsed_group), key=lambda item: item.received_at)
+        try:
+            incoming = merge_order_group(parsed_group)
+            role = _event_role([event for event, _items in parsed_group])
+            next_state, warning = apply_order_version(state, incoming, role)
+        except DataValidationError as exc:
+            message = f"주문 버전 분석 제외: {applied_event.original_name} ({exc})"
+            logger.warning("[%s] %s", mkr, message)
+            warnings.append(message)
+            continue
+        state = next_state
         first_event = first_event or min(
             (event for event, _items in parsed_group), key=lambda item: item.received_at
         )
@@ -207,7 +218,12 @@ def reconstruct_order_state(events, order_reader, mkr: str, logger) -> OrderStat
             warnings.append(f"{applied_event.original_name}: {warning}")
         logger.info("[%s] 주문 상태 반영: %s / %s / %d개", mkr, applied_event.original_name, role, len(state))
     if not state or first_event is None or latest_event is None:
-        raise DataValidationError(f"{mkr} 주문 첨부에서 품목을 읽지 못했습니다.")
+        message = (
+            "주문 첨부에서 품목을 읽지 못했습니다. Sales Note와 백오더에서 확인되는 값만 반영합니다."
+        )
+        logger.warning("[%s] %s", mkr, message)
+        warnings.append(message)
+        return OrderState({}, None, None, tuple(warnings))
     return OrderState(state, first_event, latest_event, tuple(warnings))
 
 
@@ -336,7 +352,7 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
             current = order_state.items.get(item.code)
             backorders.append(replace(item, origin=current.origin if current else "Unknown"))
         validate_capacity(mkr, len(order_state.items), len(backorders), config.max_rows)
-        order_source = order_state.latest_event.original_name
+        order_source = order_state.latest_event.original_name if order_state.latest_event else ""
         sales_source = sales_event.original_name if sales_event else ""
         decisions = build_decisions(
             mkr,
@@ -346,6 +362,7 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
             sales_note_available=sales_event is not None,
             order_source=order_source,
             sales_note_source=sales_source,
+            warning_sink=warnings,
         )
         if sales_event is None:
             warnings.append("유효한 SALES NOTE가 없어 Shipped/Shortage QTY를 공란으로 유지했습니다.")
@@ -353,6 +370,11 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
             warnings.append("주문서에는 없고 SALES NOTE에서만 확인된 품목이 있습니다.")
         if any(item.origin == "Unknown" for item in decisions):
             warnings.append("파일명만으로 원산지를 판정하지 못한 품목이 있습니다.")
+        if not decisions and not backorders:
+            raise DataValidationError(
+                f"{mkr}에서 반영할 주문, Sales Note 또는 백오더 품목을 찾지 못했습니다. "
+                "기존 시트는 유지합니다."
+            )
         status = "READY_WITH_WARNING" if warnings else "READY"
         results.append(
             MkrResult(
@@ -360,7 +382,7 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
                 sheet=sheet_name,
                 decisions=decisions,
                 backorders=backorders,
-                order_date=order_state.first_event.received_at.date(),
+                order_date=(order_state.first_event.received_at.date() if order_state.first_event else None),
                 ship_date=ship_date,
                 eta=eta,
                 etd=etd,
@@ -368,7 +390,7 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
                 warnings=warnings,
                 order_source=order_source,
                 sales_note_source=sales_source,
-                order_state_as_of=order_state.latest_event.received_at,
+                order_state_as_of=(order_state.latest_event.received_at if order_state.latest_event else None),
             )
         )
         logger.info(

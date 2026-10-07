@@ -84,8 +84,9 @@ K = 백오더 Order QTY 합계
 L = 이번 MKR에 포함된 백오더 Shipped QTY 합계
 
 Sales Note가 아직 없으면 Shipped/Shortage QTY를 추정하지 않고 공란으로 둡니다.
-주문서에 없지만 Sales Note에서 출하가 확인된 품목도 누락시키지 않고 SALES_NOTE_ONLY로 표시합니다.
-관계가 맞지 않거나 계산 결과가 음수이면 해당 MKR을 오류로 표시합니다. 다른 MKR은 가능한 범위에서 계속 분석합니다.
+원주문 첨부가 없어도 Sales Note와 백오더에서 확인되는 품목은 SALES_NOTE_ONLY로 반영합니다.
+품목 하나의 수량 관계가 맞지 않으면 해당 품목을 REVIEW_REQUIRED로 표시하고, 확인 가능한 Order만 기록한 뒤 Shipped/Shortage는 공란으로 둡니다.
+주문·Sales Note·백오더 근거가 모두 없는 MKR만 기존 시트를 유지하며 건너뛰고, 나머지 MKR은 계속 적용할 수 있습니다.
 
 6. 결과 폴더
 -----------

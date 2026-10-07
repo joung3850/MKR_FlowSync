@@ -159,6 +159,21 @@ def decide_quantity(
             if ZERO <= adjusted <= order_qty:
                 shipped_qty = adjusted
                 shipped_adjusted = True
+        if (
+            shipped_qty > order_qty
+            and sales_note_order_qty is None
+            and backorder_order_qty > ZERO
+            and raw_order_qty == first_shipped_qty
+        ):
+            # Some Sales Notes omit Order QTY while their Shipped total still
+            # includes the full historical backorder order (K), not only the
+            # quantity already shipped (L).  R7 already removed K from Order;
+            # apply the same anchored split to Shipped before giving up.
+            adjusted = first_shipped_qty - backorder_order_qty
+            if ZERO <= adjusted <= order_qty:
+                shipped_qty = adjusted
+                shipped_adjusted = True
+                rule_id = "R13_MISSING_SALES_SHIPPED_INCLUDES_K"
         if shipped_qty > order_qty:
             bad = RuleContext(**{**context.__dict__, "attempted_rule": rule_id})
             raise QuantityRuleError("조정 후에도 Shipped QTY가 신규 Order QTY보다 큽니다.", bad)
@@ -189,6 +204,7 @@ def build_decisions(
     sales_note_available: bool | None = None,
     order_source: str = "",
     sales_note_source: str = "",
+    warning_sink: list[str] | None = None,
 ) -> list[QuantityDecision]:
     if sales_note_available is None:
         sales_note_available = bool(sales_evidence)
@@ -212,20 +228,30 @@ def build_decisions(
             elif item.quantity >= k_qty:
                 order_qty = item.quantity - k_qty
             else:
-                bad = RuleContext(
-                    mkr=mkr,
-                    code=code,
-                    raw_order_qty=item.quantity,
-                    first_shipped_qty=ZERO,
-                    sales_note_order_qty=None,
-                    backorder_order_qty=k_qty,
-                    backorder_shipped_qty=l_qty,
-                    attempted_rule="R11_PENDING_SALES_NOTE",
+                if warning_sink is not None:
+                    warning_sink.append(
+                        f"{code}: Sales Note 미수신 상태에서 주문과 백오더를 분리할 수 없어 "
+                        "확인 가능한 수량만 남겼습니다."
+                    )
+                decisions.append(
+                    QuantityDecision(
+                        mkr=mkr,
+                        code=code,
+                        name=item.name,
+                        raw_order_qty=item.quantity,
+                        first_shipped_qty=None,
+                        sales_note_order_qty=None,
+                        backorder_order_qty=k_qty,
+                        backorder_shipped_qty=l_qty,
+                        order_qty=None,
+                        shipped_qty=None,
+                        rule_id="R90_REVIEW_REQUIRED",
+                        origin=item.origin,
+                        record_status="REVIEW_REQUIRED",
+                        order_source=item.source or order_source,
+                    )
                 )
-                raise QuantityRuleError(
-                    "Sales Note 미수신 상태에서 현재 주문수량과 백오더를 분리할 수 없습니다.",
-                    bad,
-                )
+                continue
             decisions.append(
                 QuantityDecision(
                     mkr=mkr,
@@ -277,24 +303,76 @@ def build_decisions(
                     backorder_shipped_qty=l_qty,
                     attempted_rule="SALES_TOTAL_MINUS_BACKORDER_L",
                 )
-                raise QuantityRuleError(
-                    "Sales Note 출하 합계가 확인된 백오더 출하 합계보다 작습니다.",
-                    bad,
+                exc = QuantityRuleError(
+                    "Sales Note 출하 합계가 확인된 백오더 출하 합계보다 작습니다.", bad
                 )
+                if warning_sink is not None:
+                    warning_sink.append(f"{code}: {exc} Shipped/Shortage는 공란으로 반영합니다.")
+                decisions.append(
+                    QuantityDecision(
+                        mkr=mkr,
+                        code=code,
+                        name=item.name,
+                        raw_order_qty=item.quantity,
+                        first_shipped_qty=evidence.shipped_qty,
+                        sales_note_order_qty=evidence.order_qty,
+                        backorder_order_qty=k_qty,
+                        backorder_shipped_qty=l_qty,
+                        order_qty=item.quantity,
+                        shipped_qty=None,
+                        rule_id="R90_REVIEW_REQUIRED",
+                        origin=item.origin,
+                        record_status="REVIEW_REQUIRED",
+                        order_source=item.source or order_source,
+                        sales_note_source=sales_note_source,
+                    )
+                )
+                continue
             first_shipped = evidence.shipped_qty - l_qty
         sales_order = None if evidence is None else evidence.order_qty
-        decision = decide_quantity(
-            mkr=mkr,
-            code=code,
-            name=item.name,
-            raw_order_qty=item.quantity,
-            first_shipped_qty=first_shipped,
-            sales_note_order_qty=sales_order,
-            backorder_order_qty=k_qty,
-            backorder_shipped_qty=l_qty,
-            shipped_fallback=shipped_fallback,
-            backorders_separated=item.backorders_separated,
-        )
+        try:
+            decision = decide_quantity(
+                mkr=mkr,
+                code=code,
+                name=item.name,
+                raw_order_qty=item.quantity,
+                first_shipped_qty=first_shipped,
+                sales_note_order_qty=sales_order,
+                backorder_order_qty=k_qty,
+                backorder_shipped_qty=l_qty,
+                shipped_fallback=shipped_fallback,
+                backorders_separated=item.backorders_separated,
+            )
+        except QuantityRuleError as exc:
+            confirmed_order = (
+                item.quantity
+                if item.backorders_separated
+                else item.quantity - k_qty if item.quantity >= k_qty else None
+            )
+            if warning_sink is not None:
+                warning_sink.append(
+                    f"{code}: {exc} 확인 가능한 Order만 반영하고 Shipped/Shortage는 공란으로 둡니다."
+                )
+            decisions.append(
+                QuantityDecision(
+                    mkr=mkr,
+                    code=code,
+                    name=item.name,
+                    raw_order_qty=item.quantity,
+                    first_shipped_qty=first_shipped,
+                    sales_note_order_qty=sales_order,
+                    backorder_order_qty=k_qty,
+                    backorder_shipped_qty=l_qty,
+                    order_qty=confirmed_order,
+                    shipped_qty=None,
+                    rule_id="R90_REVIEW_REQUIRED",
+                    origin=item.origin,
+                    record_status="REVIEW_REQUIRED",
+                    order_source=item.source or order_source,
+                    sales_note_source=sales_note_source,
+                )
+            )
+            continue
         decisions.append(
             replace(
                 decision,
@@ -311,9 +389,14 @@ def build_decisions(
     for code in sorted(set(sales_evidence).difference(order_items)):
         evidence = sales_evidence[code]
         k_qty, l_qty = totals[code]
+        current_order: Decimal | None = None
+        if evidence.order_qty is not None and evidence.order_qty >= k_qty:
+            current_order = evidence.order_qty - k_qty
         if evidence.shipped_qty is None:
-            continue
-        if evidence.shipped_qty < l_qty:
+            if current_order is None:
+                continue
+            current_shipped = None
+        elif evidence.shipped_qty < l_qty:
             bad = RuleContext(
                 mkr=mkr,
                 code=code,
@@ -324,18 +407,27 @@ def build_decisions(
                 backorder_shipped_qty=l_qty,
                 attempted_rule="R12_SALES_NOTE_ONLY",
             )
-            raise QuantityRuleError(
-                "Sales Note 전용 품목의 출하량이 확인된 백오더 출하량보다 작습니다.",
-                bad,
+            exc = QuantityRuleError(
+                "Sales Note 전용 품목의 출하량이 확인된 백오더 출하량보다 작습니다.", bad
             )
-        current_shipped = evidence.shipped_qty - l_qty
-        if current_shipped == ZERO:
+            if warning_sink is not None:
+                warning_sink.append(f"{code}: {exc} Shipped/Shortage는 공란으로 반영합니다.")
+            current_shipped = None
+        else:
+            current_shipped = evidence.shipped_qty - l_qty
+        if current_shipped == ZERO and current_order is None:
             continue
-        current_order: Decimal | None = None
-        if evidence.order_qty is not None and evidence.order_qty >= k_qty:
-            candidate = evidence.order_qty - k_qty
-            if candidate >= current_shipped:
-                current_order = candidate
+        if (
+            current_shipped is not None
+            and current_order is not None
+            and current_shipped > current_order
+        ):
+            if warning_sink is not None:
+                warning_sink.append(
+                    f"{code}: Sales Note 전용 품목의 Shipped가 Order보다 커서 "
+                    "Shipped/Shortage는 공란으로 반영합니다."
+                )
+            current_shipped = None
         decisions.append(
             QuantityDecision(
                 mkr=mkr,
