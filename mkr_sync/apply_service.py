@@ -213,12 +213,24 @@ def apply_preview_results(
             sum(len(item.decisions) for item in results),
             sum(len(item.backorders) for item in results),
         )
+        mkr_item_counts: dict[str, int] = {}
+        if transaction.workbook_index is not None:
+            for row in transaction.workbook_index.lookup_rows:
+                mkr_item_counts[row.mkr] = mkr_item_counts.get(row.mkr, 0) + 1
         return {
             "kind": "excel_apply",
             "target_workbook": str(target),
             "updated_sheets": [item.sheet for item in results],
             "new_order_count": sum(len(item.decisions) for item in results),
             "backorder_count": sum(len(item.backorders) for item in results),
+            "lookup_sheets": ["MKR조회", "품목합계"],
+            "lookup_row_count": (
+                len(transaction.workbook_index.lookup_rows) if transaction.workbook_index else 0
+            ),
+            "mkr_item_counts": mkr_item_counts,
+            "product_count": (
+                len(transaction.workbook_index.product_rows) if transaction.workbook_index else 0
+            ),
             "backup_path": str(backup),
             "report_path": str(report),
             "workbook_hash": updated_hash,

@@ -164,6 +164,9 @@ class ApplyServiceTests(unittest.TestCase):
         )
         self.assertIn('id="applyButton"', html)
         self.assertIn('api("apply_preview"', html)
+        self.assertIn("lookup_row_count", html)
+        self.assertIn("mkr_item_counts", html)
+        self.assertIn("product_count", html)
 
     def test_html_defaults_outlook_search_to_ninety_days(self):
         html = (Path(__file__).resolve().parents[1] / "mkr_sync" / "web" / "index.html").read_text(
@@ -211,6 +214,10 @@ class ApplyServiceComTests(unittest.TestCase):
             lambda *_: None,
         )
         self.assertEqual(result["updated_sheets"], ["MKR52_26"])
+        self.assertEqual(result["lookup_sheets"], ["MKR조회", "품목합계"])
+        self.assertGreater(result["lookup_row_count"], 0)
+        self.assertGreater(result["product_count"], 0)
+        self.assertGreater(result["mkr_item_counts"]["MKR52/26"], 0)
         self.assertTrue(Path(result["backup_path"]).is_file())
         self.assertTrue(Path(result["report_path"]).is_file())
 
@@ -224,6 +231,10 @@ class ApplyServiceComTests(unittest.TestCase):
             excel.Visible = False
             excel.DisplayAlerts = False
             workbook = excel.Workbooks.Open(str(self.target), 0, True)
+            self.assertEqual(workbook.Worksheets.Item(1).Name, "MKR조회")
+            self.assertEqual(workbook.Worksheets.Item(2).Name, "품목합계")
+            self.assertEqual(workbook.Worksheets.Item("MKR조회").ListObjects.Item(1).Name, "MkrLookupTable")
+            self.assertEqual(workbook.Worksheets.Item("품목합계").ListObjects.Item(1).Name, "ProductSummaryTable")
             sheet = workbook.Worksheets.Item("MKR52_26")
             self.assertEqual(sheet.Range("D3").Value2, "MKR52/26")
             self.assertEqual(tuple(sheet.Range("A10:E10").Value2[0]), ("760526", "Test Product", 180.0, 120.0, 60.0))

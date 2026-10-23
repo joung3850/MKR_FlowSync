@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import hashlib
 import os
+import posixpath
 import re
 import shutil
 import zipfile
@@ -23,6 +24,12 @@ from .parsers import (
     find_target_mkrs,
     parse_order_matrix,
     validate_mkr_match,
+)
+from .workbook_index import (
+    MANAGED_SHEETS,
+    WorkbookIndex,
+    rebuild_lookup_sheets,
+    validate_lookup_sheets,
 )
 
 
@@ -327,15 +334,30 @@ def assert_workbook_available(path: Path) -> None:
 
 
 def _xlsx_merge_map(path: Path) -> dict[str, tuple[str, ...]]:
-    namespace = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    namespace = {
+        "x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
+        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+    }
+    relationship_namespace = {"r": "http://schemas.openxmlformats.org/package/2006/relationships"}
     result: dict[str, tuple[str, ...]] = {}
     with zipfile.ZipFile(path) as archive:
-        for name in sorted(item for item in archive.namelist() if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", item)):
-            root = ET.fromstring(archive.read(name))
+        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+        relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+        targets = {
+            item.attrib["Id"]: item.attrib["Target"]
+            for item in relationships.findall("r:Relationship", relationship_namespace)
+        }
+        for sheet in workbook.findall("x:sheets/x:sheet", namespace):
+            relationship_id = sheet.attrib[f"{{{namespace['r']}}}id"]
+            target = targets[relationship_id].replace("\\", "/")
+            archive_name = posixpath.normpath(target.lstrip("/"))
+            if not archive_name.startswith("xl/"):
+                archive_name = posixpath.normpath(f"xl/{archive_name}")
+            root = ET.fromstring(archive.read(archive_name))
             refs = tuple(
                 sorted(node.attrib["ref"] for node in root.findall(".//x:mergeCells/x:mergeCell", namespace))
             )
-            result[name] = refs
+            result[sheet.attrib["name"]] = refs
     return result
 
 
@@ -360,6 +382,7 @@ class WorkbookTransaction:
         self.original_hash = ""
         self.backup_path: Path | None = None
         self.source_number_formats: dict[str, dict[str, str]] = {}
+        self.workbook_index: WorkbookIndex | None = None
         self.pending_path = config.root / (
             f".{config.workbook.stem}_data_pending{config.workbook.suffix}"
         )
@@ -397,6 +420,7 @@ class WorkbookTransaction:
                 sheet = workbook.Worksheets.Item(result.sheet)
                 self.source_number_formats[result.sheet] = self._data_number_formats(sheet)
                 self._write_sheet(sheet, result)
+            self.workbook_index = rebuild_lookup_sheets(workbook, self.logger)
             workbook.SaveCopyAs(str(self.pending_path))
         except Exception as exc:
             raise WorkbookCommitError(f"임시 Excel 저장에 실패했습니다: {exc}") from exc
@@ -499,8 +523,19 @@ class WorkbookTransaction:
             missing = required_entries.difference(archive.namelist())
             if missing:
                 raise WorkbookCommitError(f"XLSX 필수 항목이 누락되었습니다: {', '.join(sorted(missing))}")
-        if _xlsx_merge_map(self.config.workbook) != _xlsx_merge_map(self.pending_path):
+        source_merges = {
+            name: refs
+            for name, refs in _xlsx_merge_map(self.config.workbook).items()
+            if name not in MANAGED_SHEETS
+        }
+        pending_merge_map = _xlsx_merge_map(self.pending_path)
+        pending_merges = {
+            name: refs for name, refs in pending_merge_map.items() if name not in MANAGED_SHEETS
+        }
+        if source_merges != pending_merges:
             raise WorkbookCommitError("통합문서 병합 셀 구조가 변경되었습니다.")
+        if any(pending_merge_map.get(name, ()) for name in MANAGED_SHEETS):
+            raise WorkbookCommitError("통합조회 시트에 예상하지 않은 병합 셀이 있습니다.")
 
         pythoncom, win32 = _load_com()
         pythoncom.CoInitialize()
@@ -523,6 +558,9 @@ class WorkbookTransaction:
                         raise WorkbookCommitError(f"{sheet_name}에 예상하지 않은 Excel 수식이 있습니다.")
             for result in results:
                 self._validate_sheet(workbook.Worksheets.Item(result.sheet), result)
+            if self.workbook_index is None:
+                raise WorkbookCommitError("통합조회 검증 기준값이 없습니다.")
+            validate_lookup_sheets(workbook, self.workbook_index)
         except WorkbookCommitError:
             raise
         except Exception as exc:

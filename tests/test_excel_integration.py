@@ -79,6 +79,9 @@ class ExcelTransactionTests(unittest.TestCase):
         transaction.commit()
         self.assertNotEqual(sha256_file(self.workbook), original_copy_hash)
         self.assertEqual(sha256_file(self.source), source_hash)
+        self.assertIsNotNone(transaction.workbook_index)
+        self.assertGreater(len(transaction.workbook_index.lookup_rows), 0)
+        self.assertGreater(len(transaction.workbook_index.product_rows), 0)
 
     def test_validation_failure_does_not_replace_original(self):
         original_hash = sha256_file(self.workbook)
