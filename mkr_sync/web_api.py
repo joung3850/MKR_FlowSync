@@ -5,6 +5,7 @@ import logging
 import os
 import re
 from datetime import date
+from email.utils import parseaddr
 from pathlib import Path
 
 from .errors import DataValidationError
@@ -18,7 +19,36 @@ from .sheet_creator import _disk_sheet_names, create_mkr_sheets
 
 
 EMAIL_PATTERN = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+ANGLE_EMAIL_PATTERN = re.compile(r"<\s*([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)\s*>")
 EXCEL_TYPES = ("Excel files (*.xlsx;*.xlsm)", "All files (*.*)")
+
+
+def normalize_sender_addresses(raw_senders: object) -> list[str]:
+    if raw_senders is None:
+        values = []
+    elif isinstance(raw_senders, (list, tuple, set)):
+        values = list(raw_senders)
+    else:
+        values = [raw_senders]
+    candidates: list[str] = []
+    for value in values:
+        for line in re.split(r"[;\n]+", str(value)):
+            line = line.strip()
+            if not line:
+                continue
+            candidates.extend([line] if "<" in line or ">" in line else line.split(","))
+
+    senders: list[str] = []
+    for candidate in candidates:
+        text = candidate.strip()
+        angle_match = ANGLE_EMAIL_PATTERN.search(text)
+        address = angle_match.group(1) if angle_match else parseaddr(text)[1]
+        address = address.strip().lower()
+        if not address or not EMAIL_PATTERN.fullmatch(address):
+            raise DataValidationError("발신인 이메일 주소를 올바르게 입력해 주세요.")
+        if address not in senders:
+            senders.append(address)
+    return senders
 
 
 class WebApi:
@@ -175,15 +205,8 @@ class WebApi:
             numbers = extract_mkr_numbers(str(request.get("text", "")))
             if not numbers:
                 raise DataValidationError("분석할 MKR 번호를 찾지 못했습니다.")
-            raw_senders = request.get("senders", [])
-            if isinstance(raw_senders, str):
-                raw_senders = re.split(r"[,;\n]+", raw_senders)
-            senders = []
-            for value in raw_senders:
-                sender = str(value).strip().lower()
-                if sender and sender not in senders:
-                    senders.append(sender)
-            if not senders or any(not EMAIL_PATTERN.fullmatch(value) for value in senders):
+            senders = normalize_sender_addresses(request.get("senders", []))
+            if not senders:
                 raise DataValidationError("발신인 이메일 주소를 올바르게 입력해 주세요.")
             if len(senders) > 10:
                 raise DataValidationError("발신인은 최대 10명까지 입력할 수 있습니다.")

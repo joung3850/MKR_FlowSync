@@ -316,15 +316,38 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
         warnings.extend(sales_warnings)
 
         ship_date = eta = etd = None
+        schedule_sources: dict[str, str] = {}
         for record in records:
             reference = record.received_at
-            ship_date = parse_date_near_keywords(
+            parsed_ship_date = parse_date_near_keywords(
                 record.body,
                 r"\b(?:Ship|Shipment|Shipping)\s*Date\b|出荷日|発送日|출하일|선적일",
                 reference,
-            ) or ship_date
-            eta = parse_date_near_keywords(record.body, r"\bETA\b|到着予定|着港|도착예정", reference) or eta
-            etd = parse_date_near_keywords(record.body, r"\bETD\b|出港|船積|출항", reference) or etd
+            )
+            parsed_eta = parse_date_near_keywords(
+                record.body, r"\bETA\b|到着予定|着港|도착예정", reference
+            )
+            parsed_etd = parse_date_near_keywords(
+                record.body, r"\bETD\b|出港|船積|출항", reference
+            )
+            source = f"{record.received_at:%Y-%m-%d %H:%M} {record.subject}"
+            if parsed_ship_date is not None:
+                ship_date = parsed_ship_date
+                schedule_sources["Ship Date"] = source
+            if parsed_eta is not None:
+                eta = parsed_eta
+                schedule_sources["ETA"] = source
+            if parsed_etd is not None:
+                etd = parsed_etd
+                schedule_sources["ETD"] = source
+        logger.info(
+            "[%s] 일정 판독: Ship Date=%s / ETA=%s / ETD=%s / 근거=%s",
+            mkr,
+            ship_date.isoformat() if ship_date else "미확인",
+            eta.isoformat() if eta else "미확인",
+            etd.isoformat() if etd else "미확인",
+            " | ".join(f"{key}: {value}" for key, value in schedule_sources.items()) or "없음",
+        )
 
         sales_by_entry = defaultdict(list)
         for event in events:

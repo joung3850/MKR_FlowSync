@@ -14,7 +14,7 @@ from mkr_sync.apply_service import apply_preview_results, deserialize_preview_re
 from mkr_sync.errors import DataValidationError
 from mkr_sync.errors import WorkbookCommitError
 from mkr_sync.office import _validate_preserved_number_formats, sha256_file
-from mkr_sync.web_api import WebApi
+from mkr_sync.web_api import WebApi, normalize_sender_addresses
 
 
 def preview_payload(target: Path) -> dict:
@@ -167,12 +167,38 @@ class ApplyServiceTests(unittest.TestCase):
         self.assertIn("lookup_row_count", html)
         self.assertIn("mkr_item_counts", html)
         self.assertIn("product_count", html)
+        self.assertIn("Ship Date", html)
+        self.assertIn("r.ship_date", html)
+        self.assertIn("r.etd", html)
+        self.assertIn("미리보기 완료 · Excel 미반영", html)
+        self.assertIn("아직 Excel에 저장되지 않았습니다", html)
 
     def test_html_defaults_outlook_search_to_ninety_days(self):
         html = (Path(__file__).resolve().parents[1] / "mkr_sync" / "web" / "index.html").read_text(
             encoding="utf-8"
         )
         self.assertIn("d.setDate(d.getDate()-90)", html)
+
+    def test_sender_display_name_is_normalized_to_email_address(self):
+        self.assertEqual(
+            normalize_sender_addresses(
+                ["Nagasawa Hikari (長澤 光里) <hnagasawa@milbon.com>"]
+            ),
+            ["hnagasawa@milbon.com"],
+        )
+        self.assertEqual(
+            normalize_sender_addresses("First <FIRST@example.com>; second@example.com"),
+            ["first@example.com", "second@example.com"],
+        )
+        with self.assertRaisesRegex(DataValidationError, "발신인 이메일"):
+            normalize_sender_addresses(["Nagasawa Hikari"])
+
+    def test_html_sender_input_supports_display_name_format(self):
+        html = (Path(__file__).resolve().parents[1] / "mkr_sync" / "web" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("Nagasawa Hikari (長澤 光里)", html)
+        self.assertIn("match?match[1]:text", html)
 
     def test_template_integer_format_zero_is_accepted_when_preserved(self):
         formats = {"C10": "0", "D10": "0", "E10": "0"}
@@ -214,7 +240,7 @@ class ApplyServiceComTests(unittest.TestCase):
             lambda *_: None,
         )
         self.assertEqual(result["updated_sheets"], ["MKR52_26"])
-        self.assertEqual(result["lookup_sheets"], ["MKR조회", "품목합계"])
+        self.assertEqual(result["lookup_sheets"], ["MKR조회"])
         self.assertGreater(result["lookup_row_count"], 0)
         self.assertGreater(result["product_count"], 0)
         self.assertGreater(result["mkr_item_counts"]["MKR52/26"], 0)
@@ -232,9 +258,15 @@ class ApplyServiceComTests(unittest.TestCase):
             excel.DisplayAlerts = False
             workbook = excel.Workbooks.Open(str(self.target), 0, True)
             self.assertEqual(workbook.Worksheets.Item(1).Name, "MKR조회")
-            self.assertEqual(workbook.Worksheets.Item(2).Name, "품목합계")
             self.assertEqual(workbook.Worksheets.Item("MKR조회").ListObjects.Item(1).Name, "MkrLookupTable")
-            self.assertEqual(workbook.Worksheets.Item("품목합계").ListObjects.Item(1).Name, "ProductSummaryTable")
+            sheet_names = {
+                workbook.Worksheets.Item(i).Name
+                for i in range(1, int(workbook.Worksheets.Count) + 1)
+            }
+            self.assertNotIn("품목합계", sheet_names)
+            lookup_rows = workbook.Worksheets.Item("MKR조회").ListObjects.Item(1).DataBodyRange.Value2
+            matched = [row for row in lookup_rows if row[0] == "MKR52/26" and str(row[2]) == "760526"]
+            self.assertEqual(matched[0][1], "2026-08-08")
             sheet = workbook.Worksheets.Item("MKR52_26")
             self.assertEqual(sheet.Range("D3").Value2, "MKR52/26")
             self.assertEqual(tuple(sheet.Range("A10:E10").Value2[0]), ("760526", "Test Product", 180.0, 120.0, 60.0))

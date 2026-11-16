@@ -6,10 +6,13 @@ from mkr_sync.workbook_index import (
     build_workbook_index,
     mkr_from_sheet_name,
     normalize_code,
+    normalize_eta,
 )
 
 
-def current(mkr, code, order, shipped, shortage, *, name="Product", origin="Japan", row=10):
+def current(
+    mkr, code, order, shipped, shortage, *, name="Product", origin="Japan", eta="", row=10
+):
     return WorkbookRecord(
         current_mkr=mkr,
         code=code,
@@ -19,6 +22,7 @@ def current(mkr, code, order, shipped, shortage, *, name="Product", origin="Japa
         order_qty=order,
         shipped_qty=shipped,
         shortage_qty=shortage,
+        eta=eta,
         row_number=row,
     )
 
@@ -33,6 +37,7 @@ def backorder(
     *,
     name="Product",
     origin="Japan",
+    eta="",
     row=10,
 ):
     return WorkbookRecord(
@@ -45,6 +50,7 @@ def backorder(
         order_qty=order,
         shipped_qty=shipped,
         shortage_qty=shortage,
+        eta=eta,
         row_number=row,
     )
 
@@ -53,13 +59,16 @@ class WorkbookIndexTests(unittest.TestCase):
     def test_mkr_lookup_combines_current_and_backorder_shipped(self):
         index = build_workbook_index(
             [
-                current("MKR60/26", "760254", D("50"), D("40"), D("10")),
+                current(
+                    "MKR60/26", "760254", D("50"), D("40"), D("10"), eta="2026-10-31"
+                ),
                 backorder(
                     "MKR60/26", "MKR55/26", "760254", D("100"), D("20"), D("80")
                 ),
             ]
         )
         row = index.lookup_rows[0]
+        self.assertEqual(row.eta, "2026-10-31")
         self.assertEqual(row.new_order_qty, D("50"))
         self.assertEqual(row.backorder_order_qty, D("100"))
         self.assertEqual(row.total_imported_shipped_qty, D("60"))
@@ -134,6 +143,8 @@ class WorkbookIndexTests(unittest.TestCase):
         self.assertEqual(normalize_code("760254"), "760254")
         self.assertEqual(mkr_from_sheet_name("MKR65_26-2"), "MKR65/26-2")
         self.assertIsNone(mkr_from_sheet_name("품목합계"))
+        self.assertEqual(normalize_eta(46326), "2026-10-31")
+        self.assertEqual(normalize_eta("2026-11-02 00:00:00"), "2026-11-02")
 
 
 if __name__ == "__main__":

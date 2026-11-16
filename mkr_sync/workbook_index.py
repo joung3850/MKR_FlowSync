@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Iterable, Literal
 
@@ -12,10 +12,10 @@ LOOKUP_SHEET = "MKR조회"
 SUMMARY_SHEET = "품목합계"
 MANAGED_SHEETS = frozenset({LOOKUP_SHEET, SUMMARY_SHEET})
 LOOKUP_TABLE = "MkrLookupTable"
-SUMMARY_TABLE = "ProductSummaryTable"
 
 LOOKUP_HEADERS = (
     "MKR",
+    "ETA",
     "품번",
     "품명",
     "원산지",
@@ -26,21 +26,6 @@ LOOKUP_HEADERS = (
     "백오더 Shipped",
     "백오더 Shortage",
     "총 수입 Shipped",
-    "데이터 상태",
-)
-
-SUMMARY_HEADERS = (
-    "품번",
-    "품명",
-    "원산지",
-    "포함 MKR 수",
-    "신규 Order 합계",
-    "신규 Shipped 합계",
-    "백오더 Shipped 합계",
-    "총 수입 Shipped",
-    "신규 Shortage 합계",
-    "최신 백오더 Order",
-    "최신 백오더 Shortage",
     "데이터 상태",
 )
 
@@ -57,6 +42,7 @@ class WorkbookRecord:
     order_qty: Decimal | None
     shipped_qty: Decimal | None
     shortage_qty: Decimal | None
+    eta: str = ""
     backorder_no: str = ""
     row_number: int = 0
 
@@ -69,6 +55,7 @@ class WorkbookRecord:
 @dataclass(frozen=True)
 class MkrLookupRow:
     mkr: str
+    eta: str
     code: str
     name: str
     origin: str
@@ -84,6 +71,7 @@ class MkrLookupRow:
     def excel_row(self) -> tuple[object, ...]:
         return (
             self.mkr,
+            self.eta,
             self.code,
             self.name,
             self.origin,
@@ -174,6 +162,25 @@ def optional_decimal(value: object) -> Decimal | None:
         return None
 
 
+def normalize_eta(value: object) -> str:
+    if value is None or str(value).strip() == "":
+        return ""
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (int, float)):
+        try:
+            return (datetime(1899, 12, 30) + timedelta(days=float(value))).date().isoformat()
+        except (OverflowError, TypeError, ValueError):
+            return str(value).strip()
+    text = str(value).strip()
+    try:
+        return datetime.fromisoformat(text).date().isoformat()
+    except ValueError:
+        return text
+
+
 def _sum_known(records: Iterable[WorkbookRecord], field: str) -> Decimal | None:
     values = [getattr(item, field) for item in records]
     if not values:
@@ -185,6 +192,11 @@ def _sum_known(records: Iterable[WorkbookRecord], field: str) -> Decimal | None:
 def _latest_name(records: Iterable[WorkbookRecord]) -> str:
     ordered = sorted(records, key=lambda item: item.sort_key)
     return next((item.name.strip() for item in reversed(ordered) if item.name.strip()), "")
+
+
+def _latest_eta(records: Iterable[WorkbookRecord]) -> str:
+    ordered = sorted(records, key=lambda item: item.sort_key)
+    return next((item.eta.strip() for item in reversed(ordered) if item.eta.strip()), "")
 
 
 def _origins(records: Iterable[WorkbookRecord]) -> str:
@@ -242,6 +254,7 @@ def build_workbook_index(records: Iterable[WorkbookRecord]) -> WorkbookIndex:
         lookup_rows.append(
             MkrLookupRow(
                 mkr=mkr,
+                eta=_latest_eta(group),
                 code=code,
                 name=_latest_name(group),
                 origin=_origins(group),
@@ -345,6 +358,8 @@ def extract_workbook_records(workbook, logger, first_row: int = 10, last_row: in
             )
             continue
 
+        eta = normalize_eta(sheet.Range("K6").Value2)
+
         current_rows = _as_rows(sheet.Range(f"A{first_row}:G{last_row}").Value2)
         for offset, row in enumerate(current_rows):
             code = normalize_code(row[0] if len(row) > 0 else None)
@@ -358,6 +373,7 @@ def extract_workbook_records(workbook, logger, first_row: int = 10, last_row: in
                     order_qty=optional_decimal(row[2]),
                     shipped_qty=optional_decimal(row[3]),
                     shortage_qty=optional_decimal(row[4]),
+                    eta=eta,
                     origin=str(row[6] or "Unknown").strip() or "Unknown",
                     record_type="CURRENT",
                     row_number=first_row + offset,
@@ -378,6 +394,7 @@ def extract_workbook_records(workbook, logger, first_row: int = 10, last_row: in
                     order_qty=optional_decimal(row[3]),
                     shipped_qty=optional_decimal(row[4]),
                     shortage_qty=optional_decimal(row[5]),
+                    eta=eta,
                     origin=str(row[6] or "Unknown").strip() or "Unknown",
                     record_type="BACKORDER",
                     row_number=first_row + offset,
@@ -424,13 +441,8 @@ def _write_managed_sheet(
     sheet.Range(f"A6:{last_column}6").VerticalAlignment = -4108
 
     data_last_row = 6 + max(len(materialized), 1)
-    if sheet.Name == SUMMARY_SHEET:
-        sheet.Range(f"A7:C{data_last_row}").NumberFormat = "@"
-        sheet.Range(f"D7:D{data_last_row}").NumberFormat = "#,##0"
-        sheet.Range(f"E7:K{data_last_row}").NumberFormat = "#,##0.###"
-    else:
-        sheet.Range(f"A7:D{data_last_row}").NumberFormat = "@"
-        sheet.Range(f"E7:K{data_last_row}").NumberFormat = "#,##0.###"
+    sheet.Range(f"A7:E{data_last_row}").NumberFormat = "@"
+    sheet.Range(f"F7:L{data_last_row}").NumberFormat = "#,##0.###"
     if materialized:
         sheet.Range(f"A7:{last_column}{data_last_row}").Value2 = tuple(materialized)
     else:
@@ -444,16 +456,12 @@ def _write_managed_sheet(
 
     sheet.Columns("A").ColumnWidth = 15
     sheet.Columns("B").ColumnWidth = 13
-    sheet.Columns("C").ColumnWidth = 42
-    sheet.Columns("D").ColumnWidth = 18
-    for column in range(5, 12):
+    sheet.Columns("C").ColumnWidth = 13
+    sheet.Columns("D").ColumnWidth = 42
+    sheet.Columns("E").ColumnWidth = 18
+    for column in range(6, 13):
         sheet.Columns(column).ColumnWidth = 17
-    sheet.Columns(12).ColumnWidth = 32
-    if sheet.Name == SUMMARY_SHEET:
-        sheet.Columns("A").ColumnWidth = 13
-        sheet.Columns("B").ColumnWidth = 42
-        sheet.Columns("C").ColumnWidth = 18
-        sheet.Columns("D").ColumnWidth = 13
+    sheet.Columns(13).ColumnWidth = 32
     sheet.Activate()
     window = workbook.Application.ActiveWindow
     window.SplitRow = 6
@@ -474,8 +482,6 @@ def rebuild_lookup_sheets(workbook, logger, updated_at: datetime | None = None) 
         if sheet is not None:
             sheet.Delete()
 
-    summary_sheet = workbook.Worksheets.Add(Before=workbook.Worksheets.Item(1))
-    summary_sheet.Name = SUMMARY_SHEET
     lookup_sheet = workbook.Worksheets.Add(Before=workbook.Worksheets.Item(1))
     lookup_sheet.Name = LOOKUP_SHEET
     refreshed_at = updated_at or datetime.now()
@@ -484,7 +490,7 @@ def rebuild_lookup_sheets(workbook, logger, updated_at: datetime | None = None) 
         lookup_sheet,
         title="MKR별 품목 조회",
         note=(
-            "표 필터에서 MKR·품번·품명을 검색합니다. 총 수입 Shipped는 신규 Shipped와 "
+            "표 필터에서 MKR·ETA·품번·품명을 검색합니다. 총 수입 Shipped는 신규 Shipped와 "
             "이번 수입건의 백오더 Shipped 합계입니다. 이 시트의 수동 수정은 다음 적용 시 재생성됩니다."
         ),
         headers=LOOKUP_HEADERS,
@@ -492,22 +498,9 @@ def rebuild_lookup_sheets(workbook, logger, updated_at: datetime | None = None) 
         table_name=LOOKUP_TABLE,
         updated_at=refreshed_at,
     )
-    _write_managed_sheet(
-        workbook,
-        summary_sheet,
-        title="품목별 전체 수량",
-        note=(
-            "모든 MKR의 품목별 합계입니다. 백오더 Order·Shortage는 Back Order NO.별 최신 기록만 "
-            "집계하며, Shipped는 각 수입건의 실적을 합산합니다."
-        ),
-        headers=SUMMARY_HEADERS,
-        rows=(item.excel_row() for item in index.product_rows),
-        table_name=SUMMARY_TABLE,
-        updated_at=refreshed_at,
-    )
     lookup_sheet.Activate()
     logger.info(
-        "통합조회 시트 갱신: MKR별 품목 %d개 / 전체 품목 %d개",
+        "MKR조회 시트 갱신: MKR별 품목 %d개 / 전체 품목 %d개",
         len(index.lookup_rows),
         len(index.product_rows),
     )
@@ -524,7 +517,7 @@ def _table_names(sheet) -> set[str]:
 def _compare_written_rows(sheet, expected_rows: tuple[tuple[object, ...], ...]) -> None:
     if not expected_rows:
         return
-    actual_rows = _as_rows(sheet.Range(f"A7:L{6 + len(expected_rows)}").Value2)
+    actual_rows = _as_rows(sheet.Range(f"A7:M{6 + len(expected_rows)}").Value2)
     if len(actual_rows) != len(expected_rows):
         raise ValueError("조회 데이터 행 수가 다릅니다.")
     for row_index, (actual, expected) in enumerate(zip(actual_rows, expected_rows), start=7):
@@ -539,22 +532,18 @@ def _compare_written_rows(sheet, expected_rows: tuple[tuple[object, ...], ...]) 
 
 def validate_lookup_sheets(workbook, index: WorkbookIndex) -> None:
     names = [str(workbook.Worksheets.Item(i).Name) for i in range(1, int(workbook.Worksheets.Count) + 1)]
-    if names[:2] != [LOOKUP_SHEET, SUMMARY_SHEET]:
-        raise ValueError("통합조회 시트 순서가 올바르지 않습니다.")
+    if not names or names[0] != LOOKUP_SHEET:
+        raise ValueError("MKR조회 시트 순서가 올바르지 않습니다.")
+    if SUMMARY_SHEET in names:
+        raise ValueError("품목합계 시트가 제거되지 않았습니다.")
     lookup = workbook.Worksheets.Item(LOOKUP_SHEET)
-    summary = workbook.Worksheets.Item(SUMMARY_SHEET)
-    if tuple(lookup.Range("A6:L6").Value2[0]) != LOOKUP_HEADERS:
+    if tuple(lookup.Range("A6:M6").Value2[0]) != LOOKUP_HEADERS:
         raise ValueError("MKR조회 헤더가 올바르지 않습니다.")
-    if tuple(summary.Range("A6:L6").Value2[0]) != SUMMARY_HEADERS:
-        raise ValueError("품목합계 헤더가 올바르지 않습니다.")
-    if LOOKUP_TABLE not in _table_names(lookup) or SUMMARY_TABLE not in _table_names(summary):
-        raise ValueError("통합조회 Excel Table이 누락되었습니다.")
+    if LOOKUP_TABLE not in _table_names(lookup):
+        raise ValueError("MKR조회 Excel Table이 누락되었습니다.")
 
     lookup_expected = tuple(item.excel_row() for item in index.lookup_rows)
-    summary_expected = tuple(item.excel_row() for item in index.product_rows)
     _compare_written_rows(lookup, lookup_expected)
-    _compare_written_rows(summary, summary_expected)
-    for sheet, row_count in ((lookup, len(lookup_expected)), (summary, len(summary_expected))):
-        formulas = _as_rows(sheet.Range(f"A1:L{max(7, row_count + 6)}").Formula)
-        if any(isinstance(value, str) and value.startswith("=") for row in formulas for value in row):
-            raise ValueError(f"{sheet.Name}에 예상하지 않은 수식이 있습니다.")
+    formulas = _as_rows(lookup.Range(f"A1:M{max(7, len(lookup_expected) + 6)}").Formula)
+    if any(isinstance(value, str) and value.startswith("=") for row in formulas for value in row):
+        raise ValueError(f"{lookup.Name}에 예상하지 않은 수식이 있습니다.")

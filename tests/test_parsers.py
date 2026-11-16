@@ -167,6 +167,26 @@ class ParserTests(unittest.TestCase):
         )
         self.assertEqual(value.isoformat(), "2026-09-14")
 
+    def test_combined_nagasawa_schedule_routes_and_parses_all_dates(self):
+        subject = "RE: MILBON KOREA ORDER 20261013　MKR65/26-2,MKR66/26-2"
+        body = "Vessel：IRENES RALLY V.027W\nETD：11/18\nETA：11/20\n出荷日：11/11"
+        targets = {"MKR65/26-2", "MKR66/26-2"}
+        reference = datetime(2026, 11, 2, 18, 42)
+
+        self.assertEqual(find_current_target_mkrs(subject, body, targets), sorted(targets))
+        self.assertEqual(
+            parse_date_near_keywords(body, r"出荷日", reference).isoformat(),
+            "2026-11-11",
+        )
+        self.assertEqual(
+            parse_date_near_keywords(body, r"\bETA\b", reference).isoformat(),
+            "2026-11-20",
+        )
+        self.assertEqual(
+            parse_date_near_keywords(body, r"\bETD\b", reference).isoformat(),
+            "2026-11-18",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

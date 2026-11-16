@@ -223,7 +223,7 @@ def apply_preview_results(
             "updated_sheets": [item.sheet for item in results],
             "new_order_count": sum(len(item.decisions) for item in results),
             "backorder_count": sum(len(item.backorders) for item in results),
-            "lookup_sheets": ["MKR조회", "품목합계"],
+            "lookup_sheets": ["MKR조회"],
             "lookup_row_count": (
                 len(transaction.workbook_index.lookup_rows) if transaction.workbook_index else 0
             ),
