@@ -44,6 +44,8 @@ def _result_dict(result: MkrResult) -> dict:
         "ship_date": result.ship_date.isoformat() if result.ship_date else None,
         "eta": result.eta.isoformat() if result.eta else None,
         "etd": result.etd.isoformat() if result.etd else None,
+        "container_no": result.container_no,
+        "container_source": result.container_source,
         "status": result.status,
         "warnings": list(result.warnings),
         "order_source": result.order_source,

@@ -62,6 +62,8 @@ class ExcelTransactionTests(unittest.TestCase):
                 decisions=[decision],
                 backorders=[backorder],
                 order_date=date(2026, 8, 1),
+                container_no="KMTU9421441",
+                container_source="fixture.xlsx",
             )
         ]
 

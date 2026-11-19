@@ -4,8 +4,9 @@ from pathlib import Path
 import unittest
 
 from mkr_sync.errors import DataValidationError
-from mkr_sync.models import AttachmentEvent, BackorderSnapshot, OrderItem
+from mkr_sync.models import AttachmentEvent, BackorderSnapshot, MailRecord, OrderItem
 from mkr_sync.workflow import (
+    _latest_container_state,
     apply_order_version,
     merge_latest_backorders,
     merge_order_group,
@@ -32,6 +33,61 @@ def event(entry_id, name, digest, minutes=0, revision=False):
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_latest_valid_logistics_mail_sets_container_number(self):
+        class Logger:
+            def info(self, *args):
+                pass
+
+            def warning(self, *args):
+                pass
+
+        first = event("first", "INVOICE MKR56_26.xls", "aaa")
+        latest = event(
+            "latest",
+            "Container Weighting Calculation- MKR56_26.xlsx",
+            "bbb",
+            minutes=10,
+        )
+        first = AttachmentEvent(**{**first.__dict__, "kind": "logistics"})
+        latest = AttachmentEvent(**{**latest.__dict__, "kind": "logistics"})
+        records = [
+            MailRecord("first", "MKR56/26", first.received_at, first.subject, ""),
+            MailRecord("latest", "MKR56/26", latest.received_at, latest.subject, ""),
+        ]
+        text_by_name = {
+            first.original_name: "No container available",
+            latest.original_name: "CONTAINER NO. KMTU9421441 / BEAU2849170",
+        }
+
+        number, source, warnings = _latest_container_state(
+            [first, latest],
+            records,
+            lambda path: text_by_name[path.name],
+            "MKR56/26",
+            Logger(),
+        )
+
+        self.assertEqual(number, "KMTU9421441, BEAU2849170")
+        self.assertIn("Container Weighting", source)
+        self.assertEqual(warnings, [])
+
+    def test_unreadable_logistics_evidence_is_marked_unresolved(self):
+        class Logger:
+            def info(self, *args):
+                pass
+
+            def warning(self, *args):
+                pass
+
+        item = event("mail", "PALLET DETAIL MKR56_26.xlsx", "aaa")
+        item = AttachmentEvent(**{**item.__dict__, "kind": "logistics"})
+        number, source, warnings = _latest_container_state(
+            [item], [], lambda _path: "PALLET NO. 1-20", "MKR56/26", Logger()
+        )
+        self.assertEqual(number, "파악불가")
+        self.assertEqual(source, "")
+        self.assertEqual(warnings, [])
+
     def test_missing_order_attachment_returns_empty_state_for_sales_note_fallback(self):
         class Logger:
             def warning(self, *args):

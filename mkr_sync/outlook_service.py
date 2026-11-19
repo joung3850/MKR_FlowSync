@@ -6,7 +6,7 @@ import logging
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterable
 
 from .errors import DataValidationError, OfficeAutomationError
 from .models import AttachmentEvent, CollectedMail, MailRecord, PreviewRequest
@@ -21,6 +21,21 @@ from .parsers import (
 
 
 ProgressCallback = Callable[[int, str], None]
+
+
+def _message_target_mkrs(
+    subject: str,
+    body: str,
+    attachment_mkrs: Iterable[Iterable[str]],
+    targets: set[str],
+) -> list[str]:
+    result = find_current_target_mkrs(subject, body, targets)
+    for file_mkrs in attachment_mkrs:
+        for file_mkr in file_mkrs:
+            if file_mkr in targets and file_mkr not in result:
+                result.append(file_mkr)
+    result.sort()
+    return result
 
 
 def _encode_folder(entry_id: str, store_id: str) -> str:
@@ -142,15 +157,6 @@ def collect_outlook_preview(
                     continue
                 subject = clean_text(mail.Subject)
                 body = current_message_body(mail.Body)
-                target_keys = find_current_target_mkrs(subject, body, targets)
-                if not target_keys:
-                    continue
-                if matched_messages >= request.max_messages:
-                    logger.info("Outlook 대상 메일 상한 %d건에 도달했습니다.", request.max_messages)
-                    break
-                matched_messages += 1
-                mail_entry_id = clean_text(mail.EntryID) or f"mail-{index}-{received:%Y%m%d%H%M%S}"
-
                 attachment_descriptors: list[tuple[object, str, str, bool, list[str]]] = []
                 for attachment_index in range(1, int(mail.Attachments.Count) + 1):
                     attachment = mail.Attachments.Item(attachment_index)
@@ -160,6 +166,20 @@ def collect_outlook_preview(
                         attachment_descriptors.append(
                             (attachment, filename, kind, revision, find_all_mkrs(filename))
                         )
+
+                target_keys = _message_target_mkrs(
+                    subject,
+                    body,
+                    (descriptor[4] for descriptor in attachment_descriptors),
+                    targets,
+                )
+                if not target_keys:
+                    continue
+                if matched_messages >= request.max_messages:
+                    logger.info("Outlook 대상 메일 상한 %d건에 도달했습니다.", request.max_messages)
+                    break
+                matched_messages += 1
+                mail_entry_id = clean_text(mail.EntryID) or f"mail-{index}-{received:%Y%m%d%H%M%S}"
 
                 for target in target_keys:
                     result.records.append(MailRecord(mail_entry_id, target, received, subject, body))

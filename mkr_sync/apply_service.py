@@ -140,6 +140,8 @@ def deserialize_preview_results(payload: dict) -> list[MkrResult]:
                     if raw_result.get("order_state_as_of") in (None, "")
                     else _datetime(raw_result.get("order_state_as_of"), f"{mkr}/Order State")
                 ),
+                container_no=str(raw_result.get("container_no", "미정")).strip() or "미정",
+                container_source=str(raw_result.get("container_source", "")).strip(),
             )
         )
     return results

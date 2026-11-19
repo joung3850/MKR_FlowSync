@@ -30,6 +30,8 @@ REPORT_FIELDS = (
     "Order Source",
     "Sales Note Source",
     "Order State As Of",
+    "Container No.",
+    "Container Source",
     "Source",
 )
 
@@ -76,6 +78,8 @@ def write_audit_report(
                         "Order State As Of": (
                             result.order_state_as_of.isoformat() if result.order_state_as_of else ""
                         ),
+                        "Container No.": result.container_no,
+                        "Container Source": result.container_source,
                     }
                 )
             for item in result.backorders:
@@ -99,6 +103,8 @@ def write_audit_report(
                         "Order State As Of": (
                             result.order_state_as_of.isoformat() if result.order_state_as_of else ""
                         ),
+                        "Container No.": result.container_no,
+                        "Container Source": result.container_source,
                     }
                 )
     return path

@@ -10,6 +10,7 @@ from mkr_sync.parsers import (
     find_target_mkrs,
     merge_sales_evidence,
     parse_backorders,
+    parse_container_numbers,
     parse_order_matrix,
     parse_date_near_keywords,
     parse_sales_note,
@@ -123,12 +124,22 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(attachment_kind("MKR52_26 Rev3 A(KRW).xlsx"), ("order", True))
         self.assertEqual(attachment_kind("MKR56_26_SALES NOTE.pdf"), ("sales_note", False))
 
-    def test_logistics_spreadsheets_are_not_original_orders(self):
-        excluded = [
-            "Lot No. List MKR49_26.xlsx",
+    def test_logistics_files_are_collected_without_becoming_orders(self):
+        logistics = [
             "PALLET DETAIL MKR49_26.xlsx",
+            "PALLET DEATIL MKR65_26.xlsx",
+            "SHIPPING DOCUMENTS MKR49_26.pdf",
             "Container Weighting Calculation- MKR48_26-1.xlsx",
             "INVOICE MKR48_26.xls",
+            "MKR4926-1, 5026-1 입고데이터.xlsx",
+            "MKR48_26 [Pallet Detail].xlsm",
+        ]
+        for filename in logistics:
+            with self.subTest(filename=filename):
+                self.assertEqual(attachment_kind(filename)[0], "logistics")
+
+        excluded = [
+            "Lot No. List MKR49_26.xlsx",
             "TSI_MKR48_26.xlsm",
             "MKR48_26-1 (TRADE SHIPPING)-rev.xls",
             "【出荷日変更】MKR49_26-1.xlsx",
@@ -137,6 +148,16 @@ class ParserTests(unittest.TestCase):
             with self.subTest(filename=filename):
                 kind, _revision = attachment_kind(filename)
                 self.assertIsNone(kind)
+
+    def test_container_numbers_require_valid_iso_6346_check_digit(self):
+        text = (
+            "CONTAINER NO. KMTU9421441 / BEAU-2849170\n"
+            "Seal KMC835461\nInvalid SKHU9971275"
+        )
+        self.assertEqual(
+            parse_container_numbers(text),
+            ["KMTU9421441", "BEAU2849170"],
+        )
 
     def test_order_matrix_fallback_rejects_container_identifiers(self):
         parsed, fallback = parse_order_matrix(

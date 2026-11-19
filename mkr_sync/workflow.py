@@ -8,8 +8,14 @@ from pathlib import Path
 from .config import AppConfig
 from .errors import DataValidationError, MkrSyncError, OfficeAutomationError
 from .models import AttachmentEvent, BackorderSnapshot, CollectedMail, MkrResult, OrderItem
-from .office import ExcelOrderReader, PdfTextReader
-from .parsers import merge_sales_evidence, parse_backorders, parse_date_near_keywords, parse_sales_note
+from .office import ExcelOrderReader, LogisticsTextReader, PdfTextReader
+from .parsers import (
+    merge_sales_evidence,
+    parse_backorders,
+    parse_container_numbers,
+    parse_date_near_keywords,
+    parse_sales_note,
+)
 from .rules import build_decisions
 
 
@@ -278,9 +284,69 @@ def _latest_sales_state(events, records, read_pdf, mkr: str, logger):
     return selected, selected_event, warnings
 
 
+def _latest_container_state(events, records, read_logistics, mkr: str, logger):
+    logistics_events = sorted(
+        (event for event in events if event.kind == "logistics"),
+        key=lambda item: (item.received_at, item.entry_id, item.original_name.casefold()),
+    )
+    record_by_entry = {record.entry_id: record for record in records}
+    grouped: dict[str, list[AttachmentEvent]] = defaultdict(list)
+    for event in logistics_events:
+        key = event.entry_id or f"{event.received_at.isoformat()}::{event.original_name}"
+        grouped[key].append(event)
+
+    selected_numbers: list[str] = []
+    selected_sources: list[str] = []
+    warnings: list[str] = []
+    for group in sorted(grouped.values(), key=lambda value: min(item.received_at for item in value)):
+        group_numbers: list[str] = []
+        group_sources: list[str] = []
+        seen_hashes: set[str] = set()
+        for event in group:
+            if event.sha256 in seen_hashes:
+                continue
+            seen_hashes.add(event.sha256)
+            try:
+                numbers = parse_container_numbers(read_logistics(event.path))
+            except OfficeAutomationError as exc:
+                message = f"컨테이너 자료 분석 제외: {event.original_name} ({exc})"
+                logger.warning("[%s] %s", mkr, message)
+                warnings.append(message)
+                continue
+            for number in numbers:
+                if number not in group_numbers:
+                    group_numbers.append(number)
+            if numbers and event.original_name not in group_sources:
+                group_sources.append(event.original_name)
+
+        record = record_by_entry.get(group[0].entry_id)
+        if record is not None:
+            body_numbers = parse_container_numbers(record.body)
+            for number in body_numbers:
+                if number not in group_numbers:
+                    group_numbers.append(number)
+            if body_numbers and "메일 본문" not in group_sources:
+                group_sources.append("메일 본문")
+        if group_numbers:
+            selected_numbers = group_numbers
+            selected_sources = group_sources
+
+    if selected_numbers:
+        container_no = ", ".join(selected_numbers)
+        source = " + ".join(selected_sources)
+        logger.info("[%s] 컨테이너 판독: %s / 근거=%s", mkr, container_no, source)
+        return container_no, source, warnings
+    if logistics_events:
+        logger.info("[%s] 컨테이너 판독: 파악불가 / 관련 물류 첨부 %d개", mkr, len(logistics_events))
+        return "파악불가", "", warnings
+    logger.info("[%s] 컨테이너 판독: 미정 / 관련 물류 첨부 없음", mkr)
+    return "미정", "", warnings
+
+
 def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[MkrResult]:
     order_reader = ExcelOrderReader(logger)
     pdf_reader = PdfTextReader()
+    logistics_reader = LogisticsTextReader()
     pdf_cache: dict[Path, str] = {}
     results: list[MkrResult] = []
     records_by_target = defaultdict(list)
@@ -314,6 +380,10 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
             events, records, read_pdf, mkr, logger
         )
         warnings.extend(sales_warnings)
+        container_no, container_source, container_warnings = _latest_container_state(
+            events, records, logistics_reader.read_text, mkr, logger
+        )
+        warnings.extend(container_warnings)
 
         ship_date = eta = etd = None
         schedule_sources: dict[str, str] = {}
@@ -414,6 +484,8 @@ def build_results(config: AppConfig, collected: CollectedMail, logger) -> list[M
                 order_source=order_source,
                 sales_note_source=sales_source,
                 order_state_as_of=(order_state.latest_event.received_at if order_state.latest_event else None),
+                container_no=container_no,
+                container_source=container_source,
             )
         )
         logger.info(

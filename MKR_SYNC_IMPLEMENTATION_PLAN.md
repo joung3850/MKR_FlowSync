@@ -11,13 +11,13 @@
 - 외부 `MKR_TEMPLATE.xlsx`의 `MKR_TEMPLATE` 시트로 누락 MKR 시트 생성
 - 대상 Excel 백업과 pending 파일 검증 후 원본 교체
 - Classic Outlook 폴더, 발신인, 시작일, 최대 검색 건수 지정
-- 주문 Excel, Sales Note PDF, 메일 본문, 백오더 자료 분석
+- 주문 Excel, Sales Note PDF, 메일 본문, 백오더와 물류 첨부자료 분석
 - 주문 최초본·추가본·개정본의 시간순 상태 재구성
 - 최신 유효 Sales Note와 백오더를 결합한 R·S·P·K·L 판정 미리보기
 - `Reports/MKR_PREVIEW_날짜시간.csv`와 실행 로그 생성
 - 성공한 MKR 미리보기 결과만 사용자 승인 후 부분 적용
 - A:G, H:N, D3, G8, K4:K7 기록 전 백업, pending 저장, 값·구조 검증, 원본 교체
-- 전체 MKR 시트를 다시 읽어 ETA가 포함된 `MKR조회`를 자동 재생성하고 기존 `품목합계`는 제거
+- 전체 MKR 시트를 다시 읽어 ETA와 Container No.가 포함된 `MKR조회`를 자동 재생성하고 기존 `품목합계`는 제거
 - 실행 중 진행률 표시와 처리 단위 경계의 취소
 
 미리보기 단계에서는 Excel을 변경하지 않는다. 사용자가 `Excel에 적용`을 승인한 경우에만 검증된 미리보기 스냅샷을 기록한다.
@@ -73,6 +73,11 @@ MKR_SYNC.exe
 - 주문 첨부를 시간순으로 처리한다. 개정본은 전체 상태를 교체하고, 명확한 추가본은 누적본 또는 증분본으로 병합한다.
 - 같은 메일의 A(KRW)/B(THB) 파일을 합치고 품목별 Origin을 Japan/Thailand/Mixed/Unknown으로 보존한다.
 - 최신 유효 Sales Note, 최신 백오더 스냅샷, 후속 일정 메일을 분석한다.
+- Pallet Detail, Shipping Documents, Invoice, 입고데이터, Container Weighting Calculation을
+  물류 근거로 수집하고 ISO 6346 형식과 체크 숫자가 유효한 Container No.를 판독한다.
+- 제목·본문에 MKR 번호가 없어도 인식된 물류 첨부파일명에 있는 대상 MKR 번호를 검색 근거로 사용한다.
+- 물류 자료에서 번호를 확인하면 표시하고, 관련 파일은 있으나 판독되지 않으면 `파악불가`,
+  관련 물류 자료가 없으면 `미정`으로 표시한다.
 - Sales Note 미수신 시 Shipped/Shortage를 추정하지 않고 공란으로 유지한다.
 - 주문서에는 없지만 Sales Note에 남은 출하 품목을 `SALES_NOTE_ONLY`로 보존한다.
 - 원주문 첨부가 없거나 특정 주문 버전이 충돌해도 Sales Note·백오더의 독립 근거로 분석을 계속한다.
@@ -89,15 +94,15 @@ MKR_SYNC.exe
 2. 미리보기 당시 SHA256과 현재 대상 Excel의 SHA256을 비교한다.
 3. 파일이 변경되었으면 적용을 중단한다. MKR별 분석 오류는 해당 시트만 보류한다.
 4. `Backup` 폴더에 원본을 백업한다.
-5. pending Excel에 A10:G509, H10:N509, D3, G8, K4:K7을 기록한다.
+5. pending Excel에 A10:G509, H10:N509, D3, G8, K4:K7과 L3:M3 Container No.를 기록한다.
 6. 시트명과 D3가 일치하는 모든 MKR 시트를 스캔해 `MKR조회`를 통합문서 맨 앞에 다시 만들고 기존 `품목합계`는 제거한다.
-7. `MKR조회`는 MKR+품번별 ETA, 신규/백오더 수량과 총 수입 Shipped를 기록한다.
+7. `MKR조회`는 MKR+품번별 ETA, 신규/백오더 수량, 총 수입 Shipped와 Container No.를 기록한다.
 8. 동일 MKR 안에서 같은 Back Order NO.+품번이 반복되면 최신 행만 사용하고, 이번 수입건의 백오더 수량을 합산한다.
 9. 헤더, 병합 구조, 시트명, 품번, 수량, 숫자 서식, 조회 표 행 수와 합계를 재검증한다.
 10. 검증에 성공한 pending 파일만 원본 위치로 교체한다.
 11. `Reports/MKR_APPLIED_날짜시간.csv` 감사 보고서를 생성한다.
 
-조회 시트에는 수식을 두지 않는다. ETA와 품번은 텍스트, 수량은 숫자로 기록하며 공란 수량은 0으로 바꾸지 않고 `데이터 상태`에 미확인 건수를 표시한다. `MKR조회`는 Excel Table 필터로 MKR·ETA·품번·품명을 부분 검색할 수 있는 프로그램 관리 영역이다.
+조회 시트에는 수식을 두지 않는다. ETA·품번·Container No.는 텍스트, 수량은 숫자로 기록한다. `MKR조회` M열은 기존 `데이터 상태` 대신 `Container No.`를 표시하며 Excel Table 필터로 MKR·ETA·품번·품명·Container No.를 부분 검색할 수 있는 프로그램 관리 영역이다.
 
 ## 공개 JavaScript API
 
@@ -161,7 +166,7 @@ MKR_Attachments/
 - 적용 실패 시 원본 해시 유지, 성공 시 A:G·H:N·D3·G8·K4:K7 값 검증
 - 같은 품번의 여러 MKR 합산, 신규/백오더 Shipped 중복 방지, 최신 백오더 스냅샷 검증
 - 공란 Shipped의 미확인 상태, 복수 품명·원산지, 동일 MKR 재적용 시 중복 방지 검증
-- `MKR조회`의 ETA, 표, 필터, 숫자 형식, 시트 순서, 행 수와 집계값 및 `품목합계` 미생성 검증
+- `MKR조회`의 ETA, Container No., 표, 필터, 숫자 형식, 시트 순서, 행 수와 집계값 및 `품목합계` 미생성 검증
 - 취소와 중복 실행 방지
 - EXE 더블클릭 시 CMD와 외부 브라우저 없이 창 하나만 표시
 - Windows 10/11, Excel 데스크톱, Classic Outlook, WebView2 환경 통합 테스트

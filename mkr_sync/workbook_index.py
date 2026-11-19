@@ -26,7 +26,7 @@ LOOKUP_HEADERS = (
     "백오더 Shipped",
     "백오더 Shortage",
     "총 수입 Shipped",
-    "데이터 상태",
+    "Container No.",
 )
 
 MKR_SHEET_PATTERN = re.compile(r"^MKR(\d+)_(\d+)(?:-(\d+))?$", re.IGNORECASE)
@@ -43,6 +43,7 @@ class WorkbookRecord:
     shipped_qty: Decimal | None
     shortage_qty: Decimal | None
     eta: str = ""
+    container_no: str = "미정"
     backorder_no: str = ""
     row_number: int = 0
 
@@ -66,7 +67,7 @@ class MkrLookupRow:
     backorder_shipped_qty: Decimal | None
     backorder_shortage_qty: Decimal | None
     total_imported_shipped_qty: Decimal | None
-    data_status: str
+    container_no: str
 
     def excel_row(self) -> tuple[object, ...]:
         return (
@@ -82,7 +83,7 @@ class MkrLookupRow:
             self.backorder_shipped_qty,
             self.backorder_shortage_qty,
             self.total_imported_shipped_qty,
-            self.data_status,
+            self.container_no,
         )
 
 
@@ -213,6 +214,14 @@ def _origins(records: Iterable[WorkbookRecord]) -> str:
     return ", ".join(sorted(values or {"Unknown"}, key=lambda value: (order.get(value, 5), value)))
 
 
+def _container_no(records: Iterable[WorkbookRecord]) -> str:
+    values = [item.container_no.strip() for item in records if item.container_no.strip()]
+    known = [value for value in values if value not in {"미정", "파악불가"}]
+    if known:
+        return known[-1]
+    return values[-1] if values else "미정"
+
+
 def _status(groups: Iterable[tuple[str, Iterable[WorkbookRecord], str]]) -> str:
     messages: list[str] = []
     for label, records, field in groups:
@@ -265,16 +274,7 @@ def build_workbook_index(records: Iterable[WorkbookRecord]) -> WorkbookIndex:
                 backorder_shipped_qty=backorder_shipped,
                 backorder_shortage_qty=_sum_known(backorders, "shortage_qty"),
                 total_imported_shipped_qty=_sum_known(group, "shipped_qty"),
-                data_status=_status(
-                    (
-                        ("신규 Order", current, "order_qty"),
-                        ("신규 Shipped", current, "shipped_qty"),
-                        ("신규 Shortage", current, "shortage_qty"),
-                        ("백오더 Order", backorders, "order_qty"),
-                        ("백오더 Shipped", backorders, "shipped_qty"),
-                        ("백오더 Shortage", backorders, "shortage_qty"),
-                    )
-                ),
+                container_no=_container_no(group),
             )
         )
     lookup_rows.sort(key=lambda item: (*mkr_sort_key(item.mkr), item.code))
@@ -359,6 +359,7 @@ def extract_workbook_records(workbook, logger, first_row: int = 10, last_row: in
             continue
 
         eta = normalize_eta(sheet.Range("K6").Value2)
+        container_no = str(sheet.Range("M3").Value2 or "미정").strip() or "미정"
 
         current_rows = _as_rows(sheet.Range(f"A{first_row}:G{last_row}").Value2)
         for offset, row in enumerate(current_rows):
@@ -374,6 +375,7 @@ def extract_workbook_records(workbook, logger, first_row: int = 10, last_row: in
                     shipped_qty=optional_decimal(row[3]),
                     shortage_qty=optional_decimal(row[4]),
                     eta=eta,
+                    container_no=container_no,
                     origin=str(row[6] or "Unknown").strip() or "Unknown",
                     record_type="CURRENT",
                     row_number=first_row + offset,
@@ -395,6 +397,7 @@ def extract_workbook_records(workbook, logger, first_row: int = 10, last_row: in
                     shipped_qty=optional_decimal(row[4]),
                     shortage_qty=optional_decimal(row[5]),
                     eta=eta,
+                    container_no=container_no,
                     origin=str(row[6] or "Unknown").strip() or "Unknown",
                     record_type="BACKORDER",
                     row_number=first_row + offset,
@@ -461,7 +464,9 @@ def _write_managed_sheet(
     sheet.Columns("E").ColumnWidth = 18
     for column in range(6, 13):
         sheet.Columns(column).ColumnWidth = 17
-    sheet.Columns(13).ColumnWidth = 32
+    sheet.Columns(13).ColumnWidth = 48
+    sheet.Range(f"M7:M{data_last_row}").WrapText = True
+    sheet.Range(f"M7:M{data_last_row}").Rows.AutoFit()
     sheet.Activate()
     window = workbook.Application.ActiveWindow
     window.SplitRow = 6
@@ -490,8 +495,9 @@ def rebuild_lookup_sheets(workbook, logger, updated_at: datetime | None = None) 
         lookup_sheet,
         title="MKR별 품목 조회",
         note=(
-            "표 필터에서 MKR·ETA·품번·품명을 검색합니다. 총 수입 Shipped는 신규 Shipped와 "
-            "이번 수입건의 백오더 Shipped 합계입니다. 이 시트의 수동 수정은 다음 적용 시 재생성됩니다."
+            "표 필터에서 MKR·ETA·품번·품명·Container No.를 검색합니다. 총 수입 Shipped는 "
+            "신규 Shipped와 이번 수입건의 백오더 Shipped 합계입니다. 이 시트의 수동 수정은 "
+            "다음 적용 시 재생성됩니다."
         ),
         headers=LOOKUP_HEADERS,
         rows=(item.excel_row() for item in index.lookup_rows),

@@ -11,7 +11,8 @@ from mkr_sync.workbook_index import (
 
 
 def current(
-    mkr, code, order, shipped, shortage, *, name="Product", origin="Japan", eta="", row=10
+    mkr, code, order, shipped, shortage, *, name="Product", origin="Japan", eta="",
+    container_no="미정", row=10
 ):
     return WorkbookRecord(
         current_mkr=mkr,
@@ -23,6 +24,7 @@ def current(
         shipped_qty=shipped,
         shortage_qty=shortage,
         eta=eta,
+        container_no=container_no,
         row_number=row,
     )
 
@@ -38,6 +40,7 @@ def backorder(
     name="Product",
     origin="Japan",
     eta="",
+    container_no="미정",
     row=10,
 ):
     return WorkbookRecord(
@@ -51,6 +54,7 @@ def backorder(
         shipped_qty=shipped,
         shortage_qty=shortage,
         eta=eta,
+        container_no=container_no,
         row_number=row,
     )
 
@@ -72,7 +76,18 @@ class WorkbookIndexTests(unittest.TestCase):
         self.assertEqual(row.new_order_qty, D("50"))
         self.assertEqual(row.backorder_order_qty, D("100"))
         self.assertEqual(row.total_imported_shipped_qty, D("60"))
-        self.assertEqual(row.data_status, "완료")
+        self.assertEqual(row.container_no, "미정")
+
+    def test_mkr_lookup_keeps_container_number(self):
+        index = build_workbook_index(
+            [
+                current(
+                    "MKR60/26", "760254", D("50"), D("40"), D("10"),
+                    container_no="KMTU9421441, BEAU2849170",
+                )
+            ]
+        )
+        self.assertEqual(index.lookup_rows[0].container_no, "KMTU9421441, BEAU2849170")
 
     def test_product_totals_sum_shipments_but_keep_latest_backorder_snapshot(self):
         index = build_workbook_index(
@@ -117,7 +132,7 @@ class WorkbookIndexTests(unittest.TestCase):
         summary = index.product_rows[0]
         self.assertIsNone(lookup.new_shipped_qty)
         self.assertIsNone(lookup.total_imported_shipped_qty)
-        self.assertIn("신규 Shipped 1건 미확인", lookup.data_status)
+        self.assertEqual(lookup.container_no, "미정")
         self.assertIsNone(summary.total_imported_shipped_qty)
         self.assertIn("신규 Shipped 1건 미확인", summary.data_status)
 

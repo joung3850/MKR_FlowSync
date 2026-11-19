@@ -95,6 +95,8 @@ class MkrResult:
     order_source: str = ""
     sales_note_source: str = ""
     order_state_as_of: datetime | None = None
+    container_no: str = "미정"
+    container_source: str = ""
 
 
 @dataclass(frozen=True)

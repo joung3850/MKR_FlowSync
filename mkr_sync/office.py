@@ -256,6 +256,54 @@ class ExcelOrderReader:
             pythoncom.CoUninitialize()
 
 
+class LogisticsTextReader:
+    """Read searchable text from logistics PDF and Excel attachments."""
+
+    def __init__(self):
+        self.pdf_reader = PdfTextReader()
+
+    def read_text(self, path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
+            return self.pdf_reader.read_text(path)
+        if suffix not in {".xls", ".xlsx", ".xlsm"}:
+            return ""
+
+        pythoncom, win32 = _load_com()
+        pythoncom.CoInitialize()
+        excel = workbook = None
+        lines: list[str] = []
+        try:
+            excel = win32.DispatchEx("Excel.Application")
+            excel.Visible = False
+            excel.DisplayAlerts = False
+            workbook = excel.Workbooks.Open(str(path), 0, True)
+            for sheet_index in range(1, int(workbook.Worksheets.Count) + 1):
+                sheet = workbook.Worksheets.Item(sheet_index)
+                matrix = _as_matrix(sheet.UsedRange.Value2)
+                lines.extend(
+                    "\a".join(clean_text(value) for value in row)
+                    for row in matrix
+                )
+            return "\n".join(lines)
+        except Exception as exc:
+            raise OfficeAutomationError(
+                f"물류 첨부파일을 읽지 못했습니다: {path.name} / {exc}"
+            ) from exc
+        finally:
+            if workbook is not None:
+                try:
+                    workbook.Close(False)
+                except Exception:
+                    pass
+            if excel is not None:
+                try:
+                    excel.Quit()
+                except Exception:
+                    pass
+            pythoncom.CoUninitialize()
+
+
 def _as_matrix(value) -> list[list[object]]:
     if value is None:
         return []
@@ -286,12 +334,16 @@ def _is_workbook_open(path: Path) -> bool:
         return False
     target = os.path.normcase(os.path.abspath(path))
     try:
-        for index in range(1, int(excel.Workbooks.Count) + 1):
+        count = int(excel.Workbooks.Count)
+    except Exception:
+        return False
+    for index in range(1, count + 1):
+        try:
             candidate = os.path.normcase(os.path.abspath(clean_text(excel.Workbooks.Item(index).FullName)))
             if candidate == target:
                 return True
-    except Exception:
-        return True
+        except Exception:
+            continue
     return False
 
 
@@ -498,6 +550,10 @@ class WorkbookTransaction:
             sheet.Range(f"N{first}:N{end}").Value2 = _matrix((b.origin,) for b in result.backorders)
 
         sheet.Range("D3").Value2 = result.mkr
+        sheet.Range("L3:M3").ClearContents()
+        sheet.Range("L3").Value2 = "Container No."
+        sheet.Range("M3").NumberFormat = "@"
+        sheet.Range("M3").Value2 = result.container_no or "미정"
         sheet.Range("K4:K7").ClearContents()
         for address, value in (("K4", result.order_date), ("K5", result.ship_date), ("K6", result.eta), ("K7", result.etd)):
             if value is not None:
@@ -600,6 +656,10 @@ class WorkbookTransaction:
                 raise WorkbookCommitError(f"{result.sheet} 헤더가 다릅니다: {index + 1}열")
         if clean_text(sheet.Range("D3").Value2) != result.mkr:
             raise WorkbookCommitError(f"{result.sheet}의 MKR 번호가 다릅니다.")
+        if clean_text(sheet.Range("L3").Value2) != "Container No.":
+            raise WorkbookCommitError(f"{result.sheet}의 Container No. 라벨이 다릅니다.")
+        if clean_text(sheet.Range("M3").Value2) != (result.container_no or "미정"):
+            raise WorkbookCommitError(f"{result.sheet}의 Container No. 값이 다릅니다.")
         source_formats = self.source_number_formats.get(result.sheet)
         if source_formats is None:
             raise WorkbookCommitError(f"{result.sheet}의 원본 셀 서식 기준값이 없습니다.")

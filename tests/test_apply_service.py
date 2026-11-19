@@ -36,6 +36,8 @@ def preview_payload(target: Path) -> dict:
                 "ship_date": "2026-08-03",
                 "eta": "2026-08-08",
                 "etd": "2026-08-04",
+                "container_no": "KMTU9421441",
+                "container_source": "Container Weighting Calculation- MKR56_26.xlsx",
                 "decisions": [
                     {
                         "code": "760526",
@@ -88,6 +90,8 @@ class ApplyServiceTests(unittest.TestCase):
         self.assertEqual(result.decisions[0].order_qty, D("180"))
         self.assertEqual(result.decisions[0].shortage_qty, D("60"))
         self.assertEqual(result.backorders[0].received_at, datetime(2026, 8, 20, 10, 30))
+        self.assertEqual(result.container_no, "KMTU9421441")
+        self.assertIn("Container Weighting", result.container_source)
 
     def test_deserialize_pending_sales_note_keeps_unknown_quantities_blank(self):
         payload = preview_payload(self.target)
@@ -172,6 +176,7 @@ class ApplyServiceTests(unittest.TestCase):
         self.assertIn("r.etd", html)
         self.assertIn("미리보기 완료 · Excel 미반영", html)
         self.assertIn("아직 Excel에 저장되지 않았습니다", html)
+        self.assertIn("r.container_no", html)
 
     def test_html_defaults_outlook_search_to_ninety_days(self):
         html = (Path(__file__).resolve().parents[1] / "mkr_sync" / "web" / "index.html").read_text(
@@ -267,8 +272,11 @@ class ApplyServiceComTests(unittest.TestCase):
             lookup_rows = workbook.Worksheets.Item("MKR조회").ListObjects.Item(1).DataBodyRange.Value2
             matched = [row for row in lookup_rows if row[0] == "MKR52/26" and str(row[2]) == "760526"]
             self.assertEqual(matched[0][1], "2026-08-08")
+            self.assertEqual(matched[0][12], "KMTU9421441")
             sheet = workbook.Worksheets.Item("MKR52_26")
             self.assertEqual(sheet.Range("D3").Value2, "MKR52/26")
+            self.assertEqual(sheet.Range("L3").Value2, "Container No.")
+            self.assertEqual(sheet.Range("M3").Value2, "KMTU9421441")
             self.assertEqual(tuple(sheet.Range("A10:E10").Value2[0]), ("760526", "Test Product", 180.0, 120.0, 60.0))
             self.assertEqual(tuple(sheet.Range("H10:M10").Value2[0]), ("MKR48/26", "760526", "Test Product", 480.0, 420.0, 60.0))
             self.assertEqual(tuple(sheet.Range("K4:K7").Value2), (("2026-08-01",), ("2026-08-03",), ("2026-08-08",), ("2026-08-04",)))

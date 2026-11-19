@@ -15,6 +15,18 @@ MKR_PATTERN = re.compile(
     r"(?i)(?<![A-Z0-9])MKR\s*(\d{1,3})\s*[/_-]\s*(\d{2})(?:\s*[/_-]\s*(\d+))?"
 )
 NUMBER_PATTERN = r"[+-]?\d[\d,]*(?:\.\d+)?"
+CONTAINER_PATTERN = re.compile(r"(?i)(?<![A-Z0-9])([A-Z]{4})[\s-]?(\d{7})(?!\d)")
+LOGISTICS_FILENAME_PATTERN = re.compile(
+    r"(?i)pallet\s*(?:detail|deatil)|shipping\s*documents?|invoice|"
+    r"입고\s*데이터|container\s*weight(?:ing)?\s*calculation"
+)
+ISO6346_LETTER_VALUES = {
+    letter: value
+    for letter, value in zip(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        (10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 34, 35, 36, 37, 38),
+    )
+}
 
 
 def clean_text(value: object) -> str:
@@ -124,6 +136,11 @@ def attachment_kind(filename: str, subject: str = "") -> tuple[str | None, bool]
     revision = is_revision(name) or is_revision(subject)
     if re.search(r"(?i)sales[ _-]*note", name) and name.lower().endswith(".pdf"):
         return "sales_note", revision
+    if (
+        re.search(r"(?i)\.(pdf|xls|xlsx|xlsm)$", name)
+        and LOGISTICS_FILENAME_PATTERN.search(name)
+    ):
+        return "logistics", revision
     if not re.search(r"(?i)\.(xls|xlsx|xlsm)$", name):
         return None, revision
     # Files produced after the original order often contain the MKR number in
@@ -140,6 +157,27 @@ def attachment_kind(filename: str, subject: str = "") -> tuple[str | None, bool]
     if not re.search(r"(?i)(\(krw\)|order|mkr)", name):
         return None, revision
     return "order", revision
+
+
+def is_valid_container_no(value: object) -> bool:
+    normalized = re.sub(r"[\s-]+", "", clean_text(value)).upper()
+    if not re.fullmatch(r"[A-Z]{4}\d{7}", normalized):
+        return False
+    total = 0
+    for index, character in enumerate(normalized[:10]):
+        number = int(character) if character.isdigit() else ISO6346_LETTER_VALUES[character]
+        total += number * (2**index)
+    expected = (total % 11) % 10
+    return expected == int(normalized[-1])
+
+
+def parse_container_numbers(text: str) -> list[str]:
+    numbers: list[str] = []
+    for match in CONTAINER_PATTERN.finditer(text or ""):
+        value = f"{match.group(1).upper()}{match.group(2)}"
+        if is_valid_container_no(value) and value not in numbers:
+            numbers.append(value)
+    return numbers
 
 
 def get_code(value: object) -> str | None:
